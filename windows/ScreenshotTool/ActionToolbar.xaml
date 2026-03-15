@@ -1,0 +1,14 @@
+<UserControl x:Class="ScreenshotTool.ActionToolbar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="#CC000000" CornerRadius="8" Padding="8">
+        <StackPanel Orientation="Horizontal">
+            <Button x:Name="BtnScreenshot" Content="Screenshot (S)"
+                    Style="{StaticResource ToolbarButton}" Click="Screenshot_Click" Margin="0,0,4,0"/>
+            <Button x:Name="BtnGif" Content="Record GIF (G)"
+                    Style="{StaticResource ToolbarButton}" Click="Gif_Click" Margin="0,0,4,0"/>
+            <Button x:Name="BtnDiff" Content="Diff (D)"
+                    Style="{StaticResource ToolbarButton}" Click="Diff_Click"/>
+        </StackPanel>
+    </Border>
+</UserControl>

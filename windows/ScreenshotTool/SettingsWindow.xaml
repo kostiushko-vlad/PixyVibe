@@ -1,0 +1,43 @@
+<Window x:Class="ScreenshotTool.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PixyVibe Settings" Height="350" Width="450"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize">
+    <TabControl Margin="10">
+        <TabItem Header="General">
+            <StackPanel Margin="16">
+                <TextBlock Text="Hotkey" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Capture shortcut:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="Shift+Ctrl+6" FontFamily="Consolas"
+                               Background="#20000000" Padding="6,3"/>
+                </StackPanel>
+            </StackPanel>
+        </TabItem>
+        <TabItem Header="Capture">
+            <StackPanel Margin="16">
+                <TextBlock Text="GIF Recording" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <TextBlock Text="Frame rate:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Text="10" Width="50"/>
+                    <TextBlock Text="fps" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Max duration:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox Text="30" Width="50"/>
+                    <TextBlock Text="seconds" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                </StackPanel>
+            </StackPanel>
+        </TabItem>
+        <TabItem Header="Output">
+            <StackPanel Margin="16">
+                <TextBlock Text="Save Location" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                    <TextBox x:Name="SavePath" Text="%USERPROFILE%\.screenshottool" Width="280" Margin="0,0,8,0"/>
+                    <Button Content="Browse..." Click="Browse_Click"/>
+                </StackPanel>
+                <CheckBox Content="Auto-delete old captures" IsChecked="True"/>
+            </StackPanel>
+        </TabItem>
+    </TabControl>
+</Window>

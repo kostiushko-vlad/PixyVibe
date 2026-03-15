@@ -1,0 +1,22 @@
+<Window x:Class="ScreenshotTool.RecordingPill"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Topmost="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Width="170" Height="44"
+        ResizeMode="NoResize">
+    <Border Background="#DD000000" CornerRadius="20" Padding="14,6">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Ellipse Width="10" Height="10" Fill="Red" Margin="0,0,8,0"/>
+            <TextBlock x:Name="TimerText" Text="REC 0:00"
+                       Foreground="White" FontFamily="Consolas" FontSize="13"
+                       VerticalAlignment="Center" Margin="0,0,10,0"/>
+            <Button Content="Stop" Click="Stop_Click"
+                    Background="#33FFFFFF" Foreground="White"
+                    BorderThickness="0" Padding="8,2" Cursor="Hand"/>
+        </StackPanel>
+    </Border>
+</Window>

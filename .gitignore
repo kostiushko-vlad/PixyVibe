@@ -1,0 +1,43 @@
+# Rust
+core/target/
+linux/target/
+**/*.rs.bk
+
+# Swift / Xcode
+macos/.build/
+macos/.swiftpm/
+*.xcuserdata
+*.xcworkspace
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.moved-aside
+
+# Node.js
+mcp-server/node_modules/
+mcp-server/dist/
+
+# Windows / .NET
+windows/ScreenshotTool/bin/
+windows/ScreenshotTool/obj/
+*.suo
+*.user
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# App data
+.screenshottool/
+
+# Claude
+.claude/

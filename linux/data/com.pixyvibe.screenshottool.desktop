@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=PixyVibe Screenshot Tool
+Comment=Screenshot, GIF, and diff tool for developers
+Exec=screenshottool-linux
+Icon=com.pixyvibe.screenshottool
+Type=Application
+Categories=Utility;Graphics;
+StartupNotify=true
