@@ -6,6 +6,9 @@ linux/target/
 # Swift / Xcode
 macos/.build/
 macos/.swiftpm/
+*.o
+*.d
+*.swiftdeps
 *.xcuserdata
 *.xcworkspace
 DerivedData/

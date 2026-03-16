@@ -39,6 +39,8 @@ class OverlayWindow {
     private var regionSelectors: [RegionSelectorView] = []
     private var modePicker: ModePickerPanel!
     private var selectedCaptureMode: CaptureMode = .screenshot
+    /// Saved region in global AppKit coordinates, used to pre-select for diff-after
+    var savedRegion: CGRect?
 
     init(mode: OverlayMode) {
         self.mode = mode
@@ -98,6 +100,32 @@ class OverlayWindow {
             mainPanel.makeFirstResponder(mainPanel.contentView)
         }
         NSCursor.crosshair.set()
+
+        // Pre-select saved region (e.g. diff-after reuses the diff-before region)
+        if let globalRect = savedRegion {
+            applySavedRegion(globalRect)
+        }
+    }
+
+    private func applySavedRegion(_ globalRect: CGRect) {
+        // Find which screen contains this region and set it on the matching selector
+        for (i, screen) in NSScreen.screens.enumerated() where i < panels.count {
+            if screen.frame.intersects(globalRect) {
+                // Convert global coordinates to view-local coordinates
+                let localRect = CGRect(
+                    x: globalRect.origin.x - screen.frame.origin.x,
+                    y: globalRect.origin.y - screen.frame.origin.y,
+                    width: globalRect.width,
+                    height: globalRect.height
+                )
+                regionSelectors[i].preselect(rect: localRect)
+
+                // Make this screen's panel key so Enter works
+                panels[i].makeKeyAndOrderFront(nil)
+                panels[i].makeFirstResponder(regionSelectors[i])
+                break
+            }
+        }
     }
 
     func hide() {

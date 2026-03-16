@@ -59,7 +59,15 @@ class ScreenshotHistory {
         }
     }
 
+    func remove(filePath: String) {
+        entries.removeAll { $0.filePath == filePath }
+    }
+
     func clear() {
         entries.removeAll()
     }
+}
+
+extension Notification.Name {
+    static let screenshotHistoryChanged = Notification.Name("screenshotHistoryChanged")
 }

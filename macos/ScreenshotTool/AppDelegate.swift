@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var hotkeyManager: HotkeyManager!
     private var isDiffPending = false
+    private var diffRegion: CGRect?
     private var overlayWindow: OverlayWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -21,6 +22,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.register()
 
         NSApp.setActivationPolicy(.accessory)
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(historyChanged),
+            name: .screenshotHistoryChanged, object: nil
+        )
+    }
+
+    @objc private func historyChanged() {
+        rebuildMenu()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -144,16 +154,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleHotkey() {
         if isDiffPending {
-            showOverlay(mode: .diffAfter)
+            showOverlay(mode: .diffAfter, savedRegion: diffRegion)
         } else {
             showOverlay(mode: .normal)
         }
     }
 
-    private func showOverlay(mode: OverlayMode) {
+    private func showOverlay(mode: OverlayMode, savedRegion: CGRect? = nil) {
         overlayWindow?.hide()
 
         let overlay = OverlayWindow(mode: mode)
+        overlay.savedRegion = savedRegion
         overlay.onScreenshot = { [weak self] region in
             self?.performScreenshot(region: region)
         }
@@ -186,7 +197,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
 
         ClipboardManager.copyImage(result.imageData)
-        ToastNotification.show("Copied to clipboard ✓")
+        CapturePreview.show(imageData: result.imageData, filePath: result.filePath, label: "Screenshot")
     }
 
     private func performGifRecording(region: CGRect) {
@@ -214,8 +225,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let result = RustBridge.shared.gifFinish(sessionId) {
                 ScreenshotHistory.shared.add(imageData: result.imageData, filePath: result.filePath)
                 self?.rebuildMenu()
-                ClipboardManager.copyImage(result.imageData)
-                ToastNotification.show("GIF copied to clipboard ✓")
+                ClipboardManager.copyFileAsFinderFull(result.filePath)
+                CapturePreview.show(imageData: result.imageData, filePath: result.filePath, label: "GIF Recording")
             } else {
                 ToastNotification.show("GIF encoding failed")
             }
@@ -228,6 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         isDiffPending = true
+        diffRegion = region
         updateTrayIcon()
         ToastNotification.show("Before captured — make changes, then press ⇧⌘6")
     }
@@ -236,10 +248,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let result = RustBridge.shared.diffCompare(region: region) else {
             ToastNotification.show("Diff comparison failed")
             isDiffPending = false
+            diffRegion = nil
             updateTrayIcon()
             return
         }
         isDiffPending = false
+        diffRegion = nil
         updateTrayIcon()
 
         ScreenshotHistory.shared.add(imageData: result.imageData, filePath: result.filePath)
@@ -247,7 +261,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         ClipboardManager.copyImage(result.imageData)
         let pct = String(format: "%.1f", result.changePercentage)
-        ToastNotification.show("Diff copied — \(pct)% changed ✓")
+        CapturePreview.show(imageData: result.imageData, filePath: result.filePath, label: "Diff — \(pct)% changed")
     }
 
     private func updateTrayIcon() {

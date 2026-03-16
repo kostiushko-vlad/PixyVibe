@@ -9,6 +9,8 @@ class RegionSelectorView: NSView {
     private var currentRect: NSRect?
     private var hintText: String = "Select a region — drag to capture"
     private var cursorTrackingArea: NSTrackingArea?
+    private var isPreselected = false
+    private var confirmButtonRect: NSRect = .zero
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -40,14 +42,33 @@ class RegionSelectorView: NSView {
         addCursorRect(bounds, cursor: .crosshair)
     }
 
+    /// Pre-select a region (used for diff-after to show the previous selection).
+    func preselect(rect localRect: CGRect) {
+        currentRect = localRect
+        isPreselected = true
+        needsDisplay = true
+    }
+
     func updateHint(for captureMode: CaptureMode) {
         hintText = "Drag to select region for \(captureMode.label)"
         needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
-        startPoint = convert(event.locationInWindow, from: nil)
+        let point = convert(event.locationInWindow, from: nil)
+
+        // Check if clicking the confirm button
+        if isPreselected && !confirmButtonRect.isEmpty && confirmButtonRect.contains(point) {
+            if let rect = currentRect, rect.width > 10, rect.height > 10 {
+                onRegionSelected?(rect)
+                return
+            }
+        }
+
+        // Start new selection — clears preselection
+        startPoint = point
         currentRect = nil
+        isPreselected = false
         needsDisplay = true
     }
 
@@ -65,6 +86,7 @@ class RegionSelectorView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard !isPreselected else { return }
         guard let rect = currentRect, rect.width > 10, rect.height > 10 else {
             startPoint = nil
             currentRect = nil
@@ -75,6 +97,11 @@ class RegionSelectorView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Enter confirms a pre-selected region
+        if event.keyCode == 36, let rect = currentRect, rect.width > 10, rect.height > 10 {
+            onRegionSelected?(rect)
+            return
+        }
         if onKeyDown?(event) == true {
             return
         }
@@ -88,35 +115,96 @@ class RegionSelectorView: NSView {
         NSColor.black.withAlphaComponent(0.35).setFill()
         bounds.fill()
 
-        if let rect = currentRect {
-            // Clear the selected region
-            NSColor.clear.setFill()
-            rect.fill(using: .copy)
+        guard let rect = currentRect else { return }
 
-            // White border
-            NSColor.white.setStroke()
-            let borderPath = NSBezierPath(rect: rect)
-            borderPath.lineWidth = 2
-            borderPath.stroke()
+        // Clear the selected region
+        NSColor.clear.setFill()
+        rect.fill(using: .copy)
 
-            // Dimensions label
-            let labelText = "\(Int(rect.width)) × \(Int(rect.height))"
-            let attrs: [NSAttributedString.Key: Any] = [
-                .foregroundColor: NSColor.white,
-                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
-                .backgroundColor: NSColor.black.withAlphaComponent(0.7)
-            ]
-            let labelSize = (labelText as NSString).size(withAttributes: attrs)
-            let labelOrigin = NSPoint(
-                x: rect.midX - labelSize.width / 2,
-                y: rect.minY - labelSize.height - 6
-            )
-            (labelText as NSString).draw(at: labelOrigin, withAttributes: attrs)
+        // White border
+        NSColor.white.setStroke()
+        let borderPath = NSBezierPath(rect: rect)
+        borderPath.lineWidth = 2
+        borderPath.stroke()
+
+        // Dimensions label
+        let labelText = "\(Int(rect.width)) × \(Int(rect.height))"
+        let dimAttrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.white,
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
+            .backgroundColor: NSColor.black.withAlphaComponent(0.7)
+        ]
+        let labelSize = (labelText as NSString).size(withAttributes: dimAttrs)
+        let labelOrigin = NSPoint(
+            x: rect.midX - labelSize.width / 2,
+            y: rect.minY - labelSize.height - 6
+        )
+        (labelText as NSString).draw(at: labelOrigin, withAttributes: dimAttrs)
+
+        // Draw confirm button when pre-selected (diff-after mode)
+        if isPreselected {
+            drawConfirmButton(below: rect)
         }
+    }
+
+    private func drawConfirmButton(below rect: NSRect) {
+        let buttonText = "  Capture After  "
+        let hintText = "or press Enter  ·  drag to re-select"
+
+        let buttonFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        let hintFont = NSFont.systemFont(ofSize: 11)
+
+        let buttonAttrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.white,
+            .font: buttonFont,
+        ]
+        let hintAttrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.white.withAlphaComponent(0.6),
+            .font: hintFont,
+        ]
+
+        let buttonSize = (buttonText as NSString).size(withAttributes: buttonAttrs)
+        let hintSize = (hintText as NSString).size(withAttributes: hintAttrs)
+
+        let buttonPadH: CGFloat = 16
+        let buttonPadV: CGFloat = 8
+        let totalHeight = buttonSize.height + buttonPadV * 2
+        let gap: CGFloat = 12
+
+        let totalWidth = buttonSize.width + buttonPadH * 2 + gap + hintSize.width
+        let barX = rect.midX - totalWidth / 2
+        let barY = rect.minY - totalHeight - 30
+
+        // Confirm button background
+        let btnRect = NSRect(
+            x: barX,
+            y: barY,
+            width: buttonSize.width + buttonPadH * 2,
+            height: totalHeight
+        )
+        let btnPath = NSBezierPath(roundedRect: btnRect, xRadius: 8, yRadius: 8)
+        NSColor.controlAccentColor.setFill()
+        btnPath.fill()
+
+        // Button text
+        let btnTextOrigin = NSPoint(
+            x: btnRect.midX - buttonSize.width / 2,
+            y: btnRect.midY - buttonSize.height / 2
+        )
+        (buttonText as NSString).draw(at: btnTextOrigin, withAttributes: buttonAttrs)
+
+        // Store button rect for click detection
+        confirmButtonRect = btnRect
+
+        // Hint text
+        let hintOrigin = NSPoint(
+            x: btnRect.maxX + gap,
+            y: btnRect.midY - hintSize.height / 2
+        )
+        (hintText as NSString).draw(at: hintOrigin, withAttributes: hintAttrs)
     }
 }
 
-// Keep for backward compat, no longer used in overlay
 enum RegionAction {
     case screenshot
     case gif
