@@ -42,6 +42,7 @@ class ImageEditorWindow {
 // MARK: - Drawing Tool Types
 
 enum DrawingTool: String, CaseIterable {
+    case hand = "Hand"
     case pen = "Pen"
     case arrow = "Arrow"
     case rectangle = "Rectangle"
@@ -49,6 +50,7 @@ enum DrawingTool: String, CaseIterable {
 
     var icon: String {
         switch self {
+        case .hand: return "hand.draw"
         case .pen: return "pencil.tip"
         case .arrow: return "arrow.up.right"
         case .rectangle: return "rectangle"
@@ -65,6 +67,32 @@ struct DrawingElement {
     var text: String?
 }
 
+// MARK: - Inline Color Picker
+
+struct InlineColorPicker: View {
+    @Binding var selectedColor: Color
+    private let presets: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .white, .black]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(presets, id: \.self) { color in
+                Circle()
+                    .fill(color)
+                    .frame(width: 18, height: 18)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(selectedColor == color ? Color.primary : Color.clear, lineWidth: 2)
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.gray.opacity(0.3), lineWidth: 0.5)
+                    )
+                    .onTapGesture { selectedColor = color }
+            }
+        }
+    }
+}
+
 // MARK: - Static Image Editor
 
 struct StaticImageEditorView: View {
@@ -77,67 +105,75 @@ struct StaticImageEditorView: View {
     @State private var selectedColor: Color = .red
     @State private var lineWidth: CGFloat = 3
     @State private var elements: [DrawingElement] = []
+    @State private var undoStack: [[DrawingElement]] = []
+    @State private var redoStack: [[DrawingElement]] = []
 
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 ForEach(DrawingTool.allCases, id: \.self) { tool in
                     Button(action: { selectedTool = tool }) {
-                        VStack(spacing: 2) {
-                            Image(systemName: tool.icon)
-                                .font(.system(size: 14))
-                            Text(tool.rawValue)
-                                .font(.system(size: 9))
-                        }
-                        .frame(width: 50, height: 36)
-                        .background(selectedTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
-                        .cornerRadius(6)
+                        Image(systemName: tool.icon)
+                            .font(.system(size: 14))
+                            .frame(width: 32, height: 28)
+                            .contentShape(Rectangle())
+                            .background(selectedTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
+                            .cornerRadius(5)
                     }
                     .buttonStyle(.plain)
+                    .help(tool.rawValue)
                 }
 
-                Divider().frame(height: 30)
+                Divider().frame(height: 22)
 
-                ColorPicker("", selection: $selectedColor)
-                    .labelsHidden()
-                    .frame(width: 30)
+                InlineColorPicker(selectedColor: $selectedColor)
 
-                Divider().frame(height: 30)
+                Divider().frame(height: 22)
 
-                HStack(spacing: 4) {
-                    Text("Size:")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    Slider(value: $lineWidth, in: 1...10)
-                        .frame(width: 80)
-                }
+                Slider(value: $lineWidth, in: 1...10)
+                    .frame(width: 70)
 
-                Divider().frame(height: 30)
+                Divider().frame(height: 22)
 
                 Button(action: {
-                    if !elements.isEmpty { elements.removeLast() }
+                    guard !undoStack.isEmpty else { return }
+                    redoStack.append(elements)
+                    elements = undoStack.removeLast()
                 }) {
                     Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
-                .disabled(elements.isEmpty)
+                .disabled(undoStack.isEmpty)
+
+                Button(action: {
+                    guard !redoStack.isEmpty else { return }
+                    undoStack.append(elements)
+                    elements = redoStack.removeLast()
+                }) {
+                    Image(systemName: "arrow.uturn.forward")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .disabled(redoStack.isEmpty)
 
                 Spacer()
 
-                Button("Cancel") { onClose() }
                 Button("Save") { saveImage() }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(.bar)
 
             // Canvas
             DrawingCanvasView(
                 imageData: imageData,
                 elements: $elements,
+                undoStack: $undoStack,
+                redoStack: $redoStack,
                 selectedTool: selectedTool,
                 selectedColor: selectedColor,
                 lineWidth: lineWidth
@@ -188,23 +224,26 @@ struct StaticImageEditorView: View {
                 guard element.points.count >= 2 else { continue }
                 let start = element.points[0]
                 let end = element.points[1]
-                let path = NSBezierPath()
-                path.lineWidth = element.lineWidth
-                path.move(to: start)
-                path.line(to: end)
-                path.stroke()
                 let angle = atan2(end.y - start.y, end.x - start.x)
-                let headLen: CGFloat = 15
+                let headLen: CGFloat = max(14, element.lineWidth * 4)
                 let headAngle: CGFloat = .pi / 6
-                let arrow = NSBezierPath()
-                arrow.move(to: end)
-                arrow.line(to: CGPoint(x: end.x - headLen * cos(angle - headAngle),
-                                       y: end.y - headLen * sin(angle - headAngle)))
-                arrow.move(to: end)
-                arrow.line(to: CGPoint(x: end.x - headLen * cos(angle + headAngle),
-                                       y: end.y - headLen * sin(angle + headAngle)))
-                arrow.lineWidth = element.lineWidth
-                arrow.stroke()
+                let p1 = CGPoint(x: end.x - headLen * cos(angle - headAngle),
+                                  y: end.y - headLen * sin(angle - headAngle))
+                let p2 = CGPoint(x: end.x - headLen * cos(angle + headAngle),
+                                  y: end.y - headLen * sin(angle + headAngle))
+                let base = CGPoint(x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2)
+                let shaft = NSBezierPath()
+                shaft.lineWidth = element.lineWidth
+                shaft.lineCapStyle = .round
+                shaft.move(to: start)
+                shaft.line(to: base)
+                shaft.stroke()
+                let head = NSBezierPath()
+                head.move(to: end)
+                head.line(to: p1)
+                head.line(to: p2)
+                head.close()
+                head.fill()
 
             case .rectangle:
                 guard element.points.count >= 2 else { continue }
@@ -221,6 +260,9 @@ struct StaticImageEditorView: View {
                 ]
                 let size = (text as NSString).boundingRect(with: NSSize(width: 600, height: 10000), options: [.usesLineFragmentOrigin], attributes: attrs)
                 (text as NSString).draw(in: NSRect(origin: pt, size: size.size), withAttributes: attrs)
+
+            case .hand:
+                break
             }
         }
 
@@ -241,6 +283,8 @@ private func rectFrom(_ a: CGPoint, _ b: CGPoint) -> NSRect {
 struct DrawingCanvasView: NSViewRepresentable {
     let imageData: Data
     @Binding var elements: [DrawingElement]
+    @Binding var undoStack: [[DrawingElement]]
+    @Binding var redoStack: [[DrawingElement]]
     let selectedTool: DrawingTool
     let selectedColor: Color
     let lineWidth: CGFloat
@@ -256,8 +300,14 @@ struct DrawingCanvasView: NSViewRepresentable {
     func updateNSView(_ nsView: DrawingCanvasNSView, context: Context) {
         nsView.elements = elements
         nsView.selectedTool = selectedTool
-        nsView.selectedColor = NSColor(selectedColor)
+        let newColor = NSColor(selectedColor)
+        let colorChanged = nsView.selectedColor != newColor
+        let sizeChanged = nsView.lineWidth != lineWidth
+        nsView.selectedColor = newColor
         nsView.lineWidth = lineWidth
+        if colorChanged || sizeChanged {
+            nsView.applyStyleToActiveText()
+        }
         nsView.needsDisplay = true
     }
 
@@ -268,12 +318,20 @@ struct DrawingCanvasView: NSViewRepresentable {
         init(parent: DrawingCanvasView) { self.parent = parent }
 
         func addElement(_ element: DrawingElement) {
+            parent.undoStack.append(parent.elements)
+            parent.redoStack.removeAll()
             parent.elements.append(element)
         }
 
         func updateElement(at index: Int, _ element: DrawingElement) {
             guard index >= 0, index < parent.elements.count else { return }
             parent.elements[index] = element
+        }
+
+        /// Save a snapshot before a destructive edit (e.g. text commit that changes color/size).
+        func saveSnapshot() {
+            parent.undoStack.append(parent.elements)
+            parent.redoStack.removeAll()
         }
     }
 }
@@ -302,6 +360,11 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
     private var draggingTextIndex: Int? = nil
     private var dragOffset: CGPoint = .zero
     private var clickedTextIndex: Int? = nil  // tracks single-click vs double-click on text
+
+    // Hand tool dragging state
+    private var handDraggingIndex: Int? = nil
+    private var handDragStartImg: CGPoint = .zero  // drag start in image coords
+    private var handDragOriginalPoints: [CGPoint] = []  // original points before drag
 
     // Cursor tracking
     private var cursorTrackingArea: NSTrackingArea?
@@ -344,7 +407,7 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
         return max(14, lineWidth * 5)
     }
 
-    // MARK: - Hit test for text elements
+    // MARK: - Hit testing
 
     private func textElementRect(at index: Int) -> NSRect? {
         let element = elements[index]
@@ -366,6 +429,57 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
         return nil
     }
 
+    /// Hit test any element (for the hand tool). Returns the index of the topmost hit element.
+    private func hitTestAnyElement(at viewPoint: CGPoint) -> Int? {
+        let tolerance: CGFloat = 6
+        for (i, element) in elements.enumerated().reversed() {
+            switch element.tool {
+            case .text:
+                if let rect = textElementRect(at: i), rect.contains(viewPoint) { return i }
+
+            case .pen:
+                for j in 0..<max(0, element.points.count - 1) {
+                    let a = toViewCoords(element.points[j])
+                    let b = toViewCoords(element.points[j + 1])
+                    if distanceFromPoint(viewPoint, toSegment: a, b) < tolerance + element.lineWidth / 2 { return i }
+                }
+                if element.points.count == 1 {
+                    let p = toViewCoords(element.points[0])
+                    if hypot(viewPoint.x - p.x, viewPoint.y - p.y) < tolerance + element.lineWidth / 2 { return i }
+                }
+
+            case .arrow:
+                guard element.points.count >= 2 else { continue }
+                let a = toViewCoords(element.points[0])
+                let b = toViewCoords(element.points[1])
+                if distanceFromPoint(viewPoint, toSegment: a, b) < tolerance + element.lineWidth / 2 { return i }
+
+            case .rectangle:
+                guard element.points.count >= 2 else { continue }
+                let a = toViewCoords(element.points[0])
+                let b = toViewCoords(element.points[1])
+                let r = rectFrom(a, b)
+                let expanded = r.insetBy(dx: -(tolerance + element.lineWidth / 2), dy: -(tolerance + element.lineWidth / 2))
+                let inner = r.insetBy(dx: tolerance + element.lineWidth / 2, dy: tolerance + element.lineWidth / 2)
+                if expanded.contains(viewPoint) && !inner.contains(viewPoint) { return i }
+
+            case .hand:
+                break
+            }
+        }
+        return nil
+    }
+
+    /// Distance from a point to a line segment.
+    private func distanceFromPoint(_ p: CGPoint, toSegment a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lenSq = dx * dx + dy * dy
+        if lenSq == 0 { return hypot(p.x - a.x, p.y - a.y) }
+        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq))
+        let proj = CGPoint(x: a.x + t * dx, y: a.y + t * dy)
+        return hypot(p.x - proj.x, p.y - proj.y)
+    }
+
     // MARK: - Tracking area for cursor changes
 
     override func updateTrackingAreas() {
@@ -381,7 +495,13 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
 
     override func mouseMoved(with event: NSEvent) {
         let viewPt = convert(event.locationInWindow, from: nil)
-        if hitTestTextElement(at: viewPt) != nil {
+        if selectedTool == .hand {
+            if hitTestAnyElement(at: viewPt) != nil {
+                NSCursor.openHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        } else if hitTestTextElement(at: viewPt) != nil {
             NSCursor.openHand.set()
         } else if selectedTool == .text {
             NSCursor.iBeam.set()
@@ -415,6 +535,18 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
             return
         }
 
+        // Hand tool: click on any element to start dragging
+        if selectedTool == .hand {
+            if let idx = hitTestAnyElement(at: viewPt) {
+                coordinator?.saveSnapshot()
+                handDraggingIndex = idx
+                handDragStartImg = imgPt
+                handDragOriginalPoints = elements[idx].points
+                NSCursor.closedHand.set()
+            }
+            return
+        }
+
         // Double-click on existing text → re-edit it
         if event.clickCount == 2, let idx = hitTestTextElement(at: viewPt) {
             draggingTextIndex = nil
@@ -425,12 +557,19 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
             editingTextIndex = idx
             textPlacementPoint = pt
             let editFontSize = max(14, element.lineWidth * 5)
-            showTextField(at: vp, text: text, fontSize: editFontSize)
+            // Drawn text origin is bottom-left in non-flipped coords;
+            // shift up by the text bounding height so the edit field aligns with the rendered text
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: editFontSize, weight: .semibold),
+            ]
+            let textBounds = (text as NSString).boundingRect(with: NSSize(width: 600, height: 10000), options: [.usesLineFragmentOrigin], attributes: attrs)
+            showTextField(at: CGPoint(x: vp.x, y: vp.y + textBounds.height), text: text, fontSize: editFontSize)
             return
         }
 
         // Single click on existing text → prepare for drag
         if let idx = hitTestTextElement(at: viewPt) {
+            coordinator?.saveSnapshot()
             clickedTextIndex = idx
             let existingPt = toViewCoords(elements[idx].points[0])
             dragOffset = CGPoint(x: viewPt.x - existingPt.x, y: viewPt.y - existingPt.y)
@@ -444,7 +583,9 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
         if selectedTool == .text {
             textPlacementPoint = imgPt
             editingTextIndex = nil
-            showTextField(at: viewPt, text: "", fontSize: fontSize())
+            // Shift up so text starts at cursor (non-flipped coords: drawn text origin is bottom-left)
+            let font = NSFont.systemFont(ofSize: fontSize(), weight: .semibold)
+            showTextField(at: CGPoint(x: viewPt.x, y: viewPt.y + font.ascender), text: "", fontSize: fontSize())
             return
         }
 
@@ -455,6 +596,18 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
 
     override func mouseDragged(with event: NSEvent) {
         let viewPt = convert(event.locationInWindow, from: nil)
+        let imgPt = toImageCoords(viewPt)
+
+        // Hand tool: drag any element by offsetting all its points
+        if let idx = handDraggingIndex {
+            let dx = imgPt.x - handDragStartImg.x
+            let dy = imgPt.y - handDragStartImg.y
+            var element = elements[idx]
+            element.points = handDragOriginalPoints.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
+            coordinator?.updateElement(at: idx, element)
+            needsDisplay = true
+            return
+        }
 
         // Start or continue dragging a text element
         if let idx = clickedTextIndex {
@@ -469,7 +622,6 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
         }
 
         guard isDragging else { return }
-        let imgPt = toImageCoords(viewPt)
 
         if selectedTool == .pen {
             currentPoints.append(imgPt)
@@ -481,6 +633,18 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if handDraggingIndex != nil {
+            handDraggingIndex = nil
+            handDragOriginalPoints = []
+            let viewPt = convert(event.locationInWindow, from: nil)
+            if hitTestAnyElement(at: viewPt) != nil {
+                NSCursor.openHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+            return
+        }
+
         if draggingTextIndex != nil || clickedTextIndex != nil {
             draggingTextIndex = nil
             clickedTextIndex = nil
@@ -618,6 +782,18 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
         textView.frame = NSRect(x: inset, y: inset, width: newWidth - inset * 2, height: newHeight - inset * 2)
     }
 
+    /// Update the active text field's color and font size to match current toolbar settings.
+    func applyStyleToActiveText() {
+        guard let textView = activeTextView, let container = activeTextContainer else { return }
+        let newFontSize = fontSize()
+        let newFont = NSFont.systemFont(ofSize: newFontSize, weight: .semibold)
+        textView.textColor = selectedColor
+        textView.insertionPointColor = selectedColor
+        textView.font = newFont
+        container.layer?.borderColor = selectedColor.cgColor
+        resizeTextContainer()
+    }
+
     private func commitTextField() {
         guard let textView = activeTextView else { return }
         let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -632,9 +808,12 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
         }
 
         if let idx = editingTextIndex {
-            var element = elements[idx]
-            element.text = text
-            coordinator?.updateElement(at: idx, element)
+            coordinator?.saveSnapshot()
+            let updatedElement = DrawingElement(
+                tool: .text, color: selectedColor, lineWidth: currentFontSize / 5,
+                points: elements[idx].points, text: text
+            )
+            coordinator?.updateElement(at: idx, updatedElement)
             editingTextIndex = nil
         } else {
             let element = DrawingElement(
@@ -649,7 +828,8 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
     // MARK: - Cursor
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: selectedTool == .text ? .iBeam : .crosshair)
+        let cursor: NSCursor = selectedTool == .hand ? .arrow : selectedTool == .text ? .iBeam : .crosshair
+        addCursorRect(bounds, cursor: cursor)
     }
 
     // MARK: - Drawing
@@ -697,23 +877,28 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
             guard element.points.count >= 2 else { return }
             let start = toViewCoords(element.points[0])
             let end = toViewCoords(element.points[1])
-            let path = NSBezierPath()
-            path.lineWidth = element.lineWidth
-            path.move(to: start)
-            path.line(to: end)
-            path.stroke()
             let angle = atan2(end.y - start.y, end.x - start.x)
-            let headLen: CGFloat = 12
+            let headLen: CGFloat = max(14, element.lineWidth * 4)
             let headAngle: CGFloat = .pi / 6
-            let arrow = NSBezierPath()
-            arrow.move(to: end)
-            arrow.line(to: CGPoint(x: end.x - headLen * cos(angle - headAngle),
-                                   y: end.y - headLen * sin(angle - headAngle)))
-            arrow.move(to: end)
-            arrow.line(to: CGPoint(x: end.x - headLen * cos(angle + headAngle),
-                                   y: end.y - headLen * sin(angle + headAngle)))
-            arrow.lineWidth = element.lineWidth
-            arrow.stroke()
+            let p1 = CGPoint(x: end.x - headLen * cos(angle - headAngle),
+                              y: end.y - headLen * sin(angle - headAngle))
+            let p2 = CGPoint(x: end.x - headLen * cos(angle + headAngle),
+                              y: end.y - headLen * sin(angle + headAngle))
+            // Shaft stops at the base of the triangle
+            let base = CGPoint(x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2)
+            let shaft = NSBezierPath()
+            shaft.lineWidth = element.lineWidth
+            shaft.lineCapStyle = .round
+            shaft.move(to: start)
+            shaft.line(to: base)
+            shaft.stroke()
+            // Filled triangle head
+            let head = NSBezierPath()
+            head.move(to: end)
+            head.line(to: p1)
+            head.line(to: p2)
+            head.close()
+            head.fill()
 
         case .rectangle:
             guard element.points.count >= 2 else { return }
@@ -733,6 +918,9 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
             ]
             let size = (text as NSString).boundingRect(with: NSSize(width: 600, height: 10000), options: [.usesLineFragmentOrigin], attributes: attrs)
             (text as NSString).draw(in: NSRect(origin: vp, size: size.size), withAttributes: attrs)
+
+        case .hand:
+            break
         }
     }
 }
