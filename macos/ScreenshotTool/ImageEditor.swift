@@ -9,27 +9,39 @@ class ImageEditorWindow {
     func open(imageData: Data, filePath: String, isGif: Bool, onSave: @escaping (Data) -> Void) {
         window?.close()
 
-        let editor: any View
+        let content: any View
         if isGif {
-            editor = GifEditorView(imageData: imageData, filePath: filePath, onSave: onSave, onClose: { [weak self] in
+            content = GifPlayerView(imageData: imageData, onClose: { [weak self] in
                 self?.window?.close()
                 self?.window = nil
             })
         } else {
-            editor = StaticImageEditorView(imageData: imageData, filePath: filePath, onSave: onSave, onClose: { [weak self] in
+            content = StaticImageEditorView(imageData: imageData, filePath: filePath, onSave: onSave, onClose: { [weak self] in
                 self?.window?.close()
                 self?.window = nil
             })
         }
 
-        let hostingView = NSHostingView(rootView: AnyView(editor))
+        // Size window to fit the image, capped to 80% of screen
+        var winWidth: CGFloat = 820
+        var winHeight: CGFloat = 620
+        if let screen = NSScreen.main?.visibleFrame, let img = NSImage(data: imageData) {
+            let maxW = screen.width * 0.8
+            let maxH = screen.height * 0.8
+            let controlsHeight: CGFloat = isGif ? 50 : 50
+            let scale = min(maxW / img.size.width, (maxH - controlsHeight) / img.size.height, 1.0)
+            winWidth = max(600, img.size.width * scale)
+            winHeight = max(400, img.size.height * scale + controlsHeight)
+        }
+
+        let hostingView = NSHostingView(rootView: AnyView(content))
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: winWidth, height: winHeight),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
-        win.title = isGif ? "Edit GIF" : "Edit Screenshot"
+        win.title = isGif ? "GIF Player" : "Edit Screenshot"
         win.contentView = hostingView
         win.center()
         win.isReleasedWhenClosed = false
@@ -925,111 +937,55 @@ class DrawingCanvasNSView: NSView, NSTextViewDelegate {
     }
 }
 
-// MARK: - GIF Editor
+// MARK: - GIF Player
 
-// MARK: - Bordered container for inline text editing
-
-// MARK: - GIF Editor
-
-struct GifEditorView: View {
+struct GifPlayerView: View {
     let imageData: Data
-    let filePath: String
-    let onSave: (Data) -> Void
     let onClose: () -> Void
 
-    @State private var speed: Double = 1.0
-    @State private var trimStart: Double = 0
-    @State private var trimEnd: Double = 1.0
-    @State private var reverse = false
+    @State private var isPlaying = true
 
     var body: some View {
         VStack(spacing: 0) {
+            ControllableGIFView(data: imageData, isPlaying: isPlaying)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
             HStack {
-                Text("Edit GIF").font(.headline)
+                Button(action: { isPlaying.toggle() }) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 16))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
                 Spacer()
-                Button("Cancel") { onClose() }
-                Button("Save") { saveGif() }
-                    .buttonStyle(.borderedProminent)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .background(.bar)
-
-            AnimatedGIFView(data: imageData)
-                .frame(maxHeight: 350)
-                .padding(12)
-
-            Divider()
-
-            VStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Trim").font(.system(size: 12, weight: .semibold))
-                    HStack {
-                        Text("Start").font(.system(size: 11)).frame(width: 40)
-                        Slider(value: $trimStart, in: 0...trimEnd)
-                        Text("\(Int(trimStart * 100))%")
-                            .font(.system(size: 11, design: .monospaced)).frame(width: 40)
-                    }
-                    HStack {
-                        Text("End").font(.system(size: 11)).frame(width: 40)
-                        Slider(value: $trimEnd, in: trimStart...1.0)
-                        Text("\(Int(trimEnd * 100))%")
-                            .font(.system(size: 11, design: .monospaced)).frame(width: 40)
-                    }
-                }
-
-                HStack {
-                    Text("Speed").font(.system(size: 12, weight: .semibold)).frame(width: 50, alignment: .leading)
-                    Slider(value: $speed, in: 0.25...3.0)
-                    Text("\(String(format: "%.1f", speed))x")
-                        .font(.system(size: 11, design: .monospaced)).frame(width: 40)
-                }
-
-                Toggle("Reverse playback", isOn: $reverse)
-                    .font(.system(size: 12))
-            }
-            .padding(16)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+struct ControllableGIFView: NSViewRepresentable {
+    let data: Data
+    let isPlaying: Bool
+
+    func makeNSView(context: Context) -> NSImageView {
+        let imageView = NSImageView()
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.animates = isPlaying
+        imageView.canDrawSubviewsIntoLayer = true
+        imageView.wantsLayer = true
+        if let image = NSImage(data: data) {
+            imageView.image = image
+        }
+        return imageView
     }
 
-    private func saveGif() {
-        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { onClose(); return }
-        let frameCount = CGImageSourceGetCount(source)
-        guard frameCount > 0 else { onClose(); return }
-
-        let startFrame = Int(trimStart * Double(frameCount))
-        let endFrame = Int(trimEnd * Double(frameCount))
-        guard endFrame > startFrame else { onClose(); return }
-
-        let output = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(output, "com.compuserve.gif" as CFString, endFrame - startFrame, nil) else { onClose(); return }
-
-        let gifProperties: [String: Any] = [
-            kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]
-        ]
-        CGImageDestinationSetProperties(dest, gifProperties as CFDictionary)
-
-        let frameRange = reverse ? Array((startFrame..<endFrame).reversed()) : Array(startFrame..<endFrame)
-
-        for i in frameRange {
-            guard let cgImage = CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
-            var delay = 0.1
-            if let props = CGImageSourceCopyPropertiesAtIndex(source, i, nil) as? [String: Any],
-               let gifProps = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] {
-                if let d = gifProps[kCGImagePropertyGIFUnclampedDelayTime as String] as? Double, d > 0 { delay = d }
-                else if let d = gifProps[kCGImagePropertyGIFDelayTime as String] as? Double, d > 0 { delay = d }
-            }
-            delay /= speed
-            delay = max(0.02, delay)
-
-            let frameProps: [String: Any] = [
-                kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: delay]
-            ]
-            CGImageDestinationAddImage(dest, cgImage, frameProps as CFDictionary)
-        }
-
-        CGImageDestinationFinalize(dest)
-        onSave(output as Data)
-        onClose()
+    func updateNSView(_ nsView: NSImageView, context: Context) {
+        nsView.animates = isPlaying
     }
 }
