@@ -45,7 +45,14 @@ class ScreenshotHistory {
     private(set) var entries: [ScreenshotEntry] = []
     private let maxEntries = 10
 
-    private init() {}
+    private var indexFileURL: URL {
+        let dir = NSHomeDirectory() + "/.screenshottool"
+        return URL(fileURLWithPath: dir).appendingPathComponent("history.json")
+    }
+
+    private init() {
+        loadFromDisk()
+    }
 
     func add(imageData: Data, filePath: String) {
         let entry = ScreenshotEntry(
@@ -57,14 +64,42 @@ class ScreenshotHistory {
         if entries.count > maxEntries {
             entries.removeLast()
         }
+        saveToDisk()
     }
 
     func remove(filePath: String) {
         entries.removeAll { $0.filePath == filePath }
+        saveToDisk()
     }
 
     func clear() {
         entries.removeAll()
+        saveToDisk()
+    }
+
+    // MARK: - Persistence
+
+    private struct PersistedEntry: Codable {
+        let filePath: String
+        let timestamp: Date
+    }
+
+    private func saveToDisk() {
+        let persisted = entries.map { PersistedEntry(filePath: $0.filePath, timestamp: $0.timestamp) }
+        if let data = try? JSONEncoder().encode(persisted) {
+            try? data.write(to: indexFileURL)
+        }
+    }
+
+    private func loadFromDisk() {
+        guard let data = try? Data(contentsOf: indexFileURL),
+              let persisted = try? JSONDecoder().decode([PersistedEntry].self, from: data) else { return }
+
+        entries = persisted.prefix(maxEntries).compactMap { entry in
+            guard FileManager.default.fileExists(atPath: entry.filePath),
+                  let imageData = try? Data(contentsOf: URL(fileURLWithPath: entry.filePath)) else { return nil }
+            return ScreenshotEntry(filePath: entry.filePath, timestamp: entry.timestamp, imageData: imageData)
+        }
     }
 }
 

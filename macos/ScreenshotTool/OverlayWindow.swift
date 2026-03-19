@@ -42,11 +42,13 @@ class OverlayWindow {
     /// Saved region in global AppKit coordinates, used to pre-select for diff-after
     var savedRegion: CGRect?
 
-    init(mode: OverlayMode) {
+    init(mode: OverlayMode, preselectedMode: CaptureMode? = nil) {
         self.mode = mode
 
         if mode == .diffAfter {
             selectedCaptureMode = .diff
+        } else if let preselected = preselectedMode {
+            selectedCaptureMode = preselected
         }
 
         // Create one overlay panel per screen
@@ -75,7 +77,7 @@ class OverlayWindow {
         }
 
         // Mode picker on the main screen
-        modePicker = ModePickerPanel()
+        modePicker = ModePickerPanel(initialMode: selectedCaptureMode)
         modePicker.isReleasedWhenClosed = false
         modePicker.onModeSelected = { [weak self] captureMode in
             self?.selectedCaptureMode = captureMode

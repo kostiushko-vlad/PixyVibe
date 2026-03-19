@@ -64,6 +64,7 @@ class RecordingPill: NSPanel {
     private var hostingView: NSHostingView<RecordingPillView>!
     private var elapsedSeconds: Int = 0
     private var borderWindow: RecordingBorderWindow?
+    private var escMonitor: Any?
 
     init(region: CGRect) {
         let pillWidth: CGFloat = 160
@@ -98,11 +99,30 @@ class RecordingPill: NSPanel {
         borderWindow = RecordingBorderWindow(region: region)
     }
 
+    override var canBecomeKey: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Esc
+            onStop?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     func show() {
         startTime = Date()
         elapsedSeconds = 0
         makeKeyAndOrderFront(nil)
         borderWindow?.orderFront(nil)
+
+        // Monitor ESC key globally (pill is non-activating so keyDown may not fire)
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 {
+                self?.onStop?()
+                return nil
+            }
+            return event
+        }
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
@@ -117,6 +137,10 @@ class RecordingPill: NSPanel {
     override func close() {
         timer?.invalidate()
         timer = nil
+        if let monitor = escMonitor {
+            NSEvent.removeMonitor(monitor)
+            escMonitor = nil
+        }
         borderWindow?.orderOut(nil)
         borderWindow = nil
         super.close()

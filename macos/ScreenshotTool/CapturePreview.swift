@@ -4,6 +4,7 @@ import SwiftUI
 class CapturePreview {
     private static var currentWindow: NSPanel?
     private static var mouseTracker: PreviewMouseTracker?
+    private static var editor = ImageEditorWindow()
 
     /// Show a preview of a captured image with action buttons.
     static func show(imageData: Data, filePath: String, label: String = "Screenshot") {
@@ -20,6 +21,24 @@ class CapturePreview {
                 isGif: isGif,
                 label: label,
                 filePath: filePath,
+                onEdit: {
+                    dismiss()
+                    editor.open(imageData: imageData, filePath: filePath, isGif: isGif, onSave: { newData in
+                        // Save edited version over the original file
+                        try? newData.write(to: URL(fileURLWithPath: filePath))
+                        // Update history
+                        ScreenshotHistory.shared.remove(filePath: filePath)
+                        ScreenshotHistory.shared.add(imageData: newData, filePath: filePath)
+                        NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
+                        // Copy to clipboard
+                        if isGif {
+                            ClipboardManager.copyFileAsFinderFull(filePath)
+                        } else {
+                            ClipboardManager.copyImage(newData)
+                        }
+                        ToastNotification.show("Saved and copied to clipboard")
+                    })
+                },
                 onSaveAs: {
                     saveAs(imageData: imageData, defaultName: (filePath as NSString).lastPathComponent)
                 },
@@ -47,8 +66,8 @@ class CapturePreview {
             let height = fittingSize.height
 
             let windowFrame = NSRect(
-                x: screen.visibleFrame.maxX - width - 20,
-                y: screen.visibleFrame.maxY - height - 20,
+                x: screen.frame.maxX - width - 20,
+                y: screen.frame.minY + 10,
                 width: width,
                 height: height
             )
@@ -165,6 +184,7 @@ struct CapturePreviewView: View {
     let isGif: Bool
     let label: String
     let filePath: String
+    let onEdit: () -> Void
     let onSaveAs: () -> Void
     let onOpenInFinder: () -> Void
     let onCopyPath: () -> Void
@@ -173,30 +193,34 @@ struct CapturePreviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Image preview
-            if isGif {
-                AnimatedGIFView(data: imageData)
-                    .frame(maxWidth: 400, maxHeight: 240)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-            } else if let nsImage = NSImage(data: imageData) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 400, maxHeight: 240)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
+            // Image preview — click to edit
+            Group {
+                if isGif {
+                    AnimatedGIFView(data: imageData)
+                        .frame(maxWidth: 400, maxHeight: 240)
+                } else if let nsImage = NSImage(data: imageData) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 400, maxHeight: 240)
+                }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { onEdit() }
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "pencil.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.white.opacity(0.7))
+                    .shadow(radius: 2)
+                    .padding(6)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
 
             // Label + clipboard badge
             HStack {
@@ -245,6 +269,7 @@ struct CapturePreviewView: View {
 
             // Action buttons
             HStack(spacing: 6) {
+                previewButton("pencil", "Edit") { onEdit() }
                 previewButton("square.and.arrow.down", "Save As") { onSaveAs() }
                 previewButton("folder", "Reveal") { onOpenInFinder() }
                 deleteButton()

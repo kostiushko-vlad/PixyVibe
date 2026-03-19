@@ -6,20 +6,22 @@ import SwiftUI
 class ImageEditorWindow {
     private var window: NSWindow?
 
-    func open(imageData: Data, filePath: String, isGif: Bool, onSave: @escaping (Data) -> Void) {
+    func open(imageData: Data, filePath: String, isGif: Bool, onSave: @escaping (Data) -> Void, onRemove: (() -> Void)? = nil) {
         window?.close()
+
+        let closeAction: () -> Void = { [weak self] in
+            self?.window?.close()
+            self?.window = nil
+        }
 
         let content: any View
         if isGif {
-            content = GifPlayerView(imageData: imageData, onClose: { [weak self] in
-                self?.window?.close()
-                self?.window = nil
-            })
+            content = GifPlayerView(imageData: imageData, onClose: closeAction)
         } else {
-            content = StaticImageEditorView(imageData: imageData, filePath: filePath, onSave: onSave, onClose: { [weak self] in
-                self?.window?.close()
-                self?.window = nil
-            })
+            content = StaticImageEditorView(imageData: imageData, filePath: filePath, onSave: onSave, onRemove: {
+                closeAction()
+                onRemove?()
+            }, onClose: closeAction)
         }
 
         // Size window to fit the image, capped to 80% of screen
@@ -86,19 +88,18 @@ struct InlineColorPicker: View {
     private let presets: [Color] = [.red, .orange, .yellow, .green, .blue, .purple, .white, .black]
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(presets, id: \.self) { color in
                 Circle()
                     .fill(color)
-                    .frame(width: 18, height: 18)
+                    .frame(width: 16, height: 16)
                     .overlay(
                         Circle()
-                            .strokeBorder(selectedColor == color ? Color.primary : Color.clear, lineWidth: 2)
+                            .strokeBorder(Color.gray.opacity(0.25), lineWidth: 0.5)
                     )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color.gray.opacity(0.3), lineWidth: 0.5)
-                    )
+                    .scaleEffect(selectedColor == color ? 1.25 : 1.0)
+                    .shadow(color: selectedColor == color ? color.opacity(0.5) : .clear, radius: 3)
+                    .animation(.easeInOut(duration: 0.15), value: selectedColor == color)
                     .onTapGesture { selectedColor = color }
             }
         }
@@ -111,6 +112,7 @@ struct StaticImageEditorView: View {
     let imageData: Data
     let filePath: String
     let onSave: (Data) -> Void
+    let onRemove: () -> Void
     let onClose: () -> Void
 
     @State private var selectedTool: DrawingTool = .pen
@@ -123,62 +125,98 @@ struct StaticImageEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Toolbar
-            HStack(spacing: 4) {
-                ForEach(DrawingTool.allCases, id: \.self) { tool in
-                    Button(action: { selectedTool = tool }) {
-                        Image(systemName: tool.icon)
-                            .font(.system(size: 14))
-                            .frame(width: 32, height: 28)
-                            .contentShape(Rectangle())
-                            .background(selectedTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
-                            .cornerRadius(5)
+            HStack(spacing: 2) {
+                // Tool buttons in a pill group
+                HStack(spacing: 0) {
+                    ForEach(DrawingTool.allCases, id: \.self) { tool in
+                        Button(action: { selectedTool = tool }) {
+                            Image(systemName: tool.icon)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(selectedTool == tool ? .white : .secondary)
+                                .frame(width: 30, height: 26)
+                                .background(selectedTool == tool ? Color.accentColor : Color.clear)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(tool.rawValue)
                     }
-                    .buttonStyle(.plain)
-                    .help(tool.rawValue)
                 }
+                .background(Color.primary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                Divider().frame(height: 22)
+                Spacer().frame(width: 8)
 
                 InlineColorPicker(selectedColor: $selectedColor)
 
-                Divider().frame(height: 22)
+                Spacer().frame(width: 8)
 
+                // Size slider in subtle container
                 Slider(value: $lineWidth, in: 1...10)
-                    .frame(width: 70)
+                    .frame(width: 60)
+                    .controlSize(.mini)
 
-                Divider().frame(height: 22)
+                Spacer().frame(width: 8)
 
-                Button(action: {
-                    guard !undoStack.isEmpty else { return }
-                    redoStack.append(elements)
-                    elements = undoStack.removeLast()
-                }) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 12))
+                // Undo/Redo pill
+                HStack(spacing: 0) {
+                    Button(action: {
+                        guard !undoStack.isEmpty else { return }
+                        redoStack.append(elements)
+                        elements = undoStack.removeLast()
+                    }) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(undoStack.isEmpty ? .secondary.opacity(0.3) : .secondary)
+                            .frame(width: 28, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(undoStack.isEmpty)
+
+                    Button(action: {
+                        guard !redoStack.isEmpty else { return }
+                        undoStack.append(elements)
+                        elements = redoStack.removeLast()
+                    }) {
+                        Image(systemName: "arrow.uturn.forward")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(redoStack.isEmpty ? .secondary.opacity(0.3) : .secondary)
+                            .frame(width: 28, height: 26)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(redoStack.isEmpty)
                 }
-                .buttonStyle(.plain)
-                .disabled(undoStack.isEmpty)
-
-                Button(action: {
-                    guard !redoStack.isEmpty else { return }
-                    undoStack.append(elements)
-                    elements = redoStack.removeLast()
-                }) {
-                    Image(systemName: "arrow.uturn.forward")
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(.plain)
-                .disabled(redoStack.isEmpty)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 Spacer()
 
-                Button("Save") { saveImage() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                // Action buttons
+                Button(action: onRemove) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .frame(width: 30, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Delete")
+
+                Button(action: { saveImage() }) {
+                    Text("Save")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .frame(height: 26)
+                        .background(Color.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(.bar)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial)
 
             // Canvas
             DrawingCanvasView(

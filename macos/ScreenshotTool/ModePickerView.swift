@@ -29,6 +29,15 @@ enum CaptureMode: Int, CaseIterable {
         case .diff: return "D"
         }
     }
+
+    var shortcutDisplay: String {
+        let store = ShortcutStore.shared
+        switch self {
+        case .screenshot: return store.screenshot.displayString
+        case .gif: return store.gifRecording.displayString
+        case .diff: return store.diff.displayString
+        }
+    }
 }
 
 class ModePickerPanel: NSPanel {
@@ -37,9 +46,10 @@ class ModePickerPanel: NSPanel {
     private var hostingView: NSHostingView<ModePickerContent>!
     private var selectedMode: CaptureMode = .screenshot
 
-    init() {
+    init(initialMode: CaptureMode = .screenshot) {
+        self.selectedMode = initialMode
         let panelWidth: CGFloat = 360
-        let panelHeight: CGFloat = 72
+        let panelHeight: CGFloat = 82
 
         guard let screen = NSScreen.main else {
             super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -153,14 +163,18 @@ struct ModePickerContent: View {
 
     private func modeButton(_ mode: CaptureMode) -> some View {
         let isSelected = mode == selectedMode
+        let shortcut = mode.shortcutDisplay
         return Button(action: { onSelect(mode) }) {
-            VStack(spacing: 3) {
+            VStack(spacing: 2) {
                 Image(systemName: mode.icon)
                     .font(.system(size: 16))
                 Text(mode.label)
                     .font(.system(size: 10, weight: .medium))
+                Text(shortcut)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.4))
             }
-            .frame(width: 84, height: 44)
+            .frame(width: 84, height: 52)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)

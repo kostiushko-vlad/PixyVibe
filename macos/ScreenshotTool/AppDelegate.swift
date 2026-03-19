@@ -7,6 +7,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDiffPending = false
     private var diffRegion: CGRect?
     private var overlayWindow: OverlayWindow?
+    private var settingsWindow: NSWindow?
+    private var editor = ImageEditorWindow()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("PixyVibe: applicationDidFinishLaunching called")
@@ -16,8 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
 
         hotkeyManager = HotkeyManager()
-        hotkeyManager.onHotkeyPressed = { [weak self] in
-            self?.handleHotkey()
+        hotkeyManager.onAction = { [weak self] action in
+            self?.handleAction(action)
         }
         hotkeyManager.register()
 
@@ -27,10 +29,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(historyChanged),
             name: .screenshotHistoryChanged, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(pauseHotkeys),
+            name: .shortcutRecordingStarted, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(resumeHotkeys),
+            name: .shortcutRecordingStopped, object: nil
+        )
     }
 
     @objc private func historyChanged() {
         rebuildMenu()
+    }
+
+    @objc private func pauseHotkeys() {
+        hotkeyManager.isPaused = true
+    }
+
+    @objc private func resumeHotkeys() {
+        hotkeyManager.isPaused = false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -61,7 +79,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(withTitle: "Capture Region", action: #selector(captureRegion), keyEquivalent: "")
         menu.items.last?.keyEquivalentModifierMask = [.shift, .command]
-        menu.items.last?.keyEquivalent = "6"
+        menu.items.last?.keyEquivalent = "2"
         menu.items.last?.target = self
 
         // History section
@@ -69,28 +87,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !history.isEmpty {
             menu.addItem(NSMenuItem.separator())
 
-            let headerItem = NSMenuItem(title: "Recent Captures", action: nil, keyEquivalent: "")
-            headerItem.isEnabled = false
-            headerItem.attributedTitle = NSAttributedString(
-                string: "Recent Captures",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                    .foregroundColor: NSColor.secondaryLabelColor
-                ]
+            let gridItem = NSMenuItem()
+            let gridView = HistoryGridView(
+                entries: history,
+                onClickEntry: { [weak self] index in
+                    self?.openHistoryEntry(at: index)
+                },
+                onCopyEntry: { index in
+                    let entry = history[index]
+                    if entry.filePath.hasSuffix(".gif") {
+                        ClipboardManager.copyFileAsFinderFull(entry.filePath)
+                    } else {
+                        ClipboardManager.copyImage(entry.imageData)
+                    }
+                    ToastNotification.show("Copied to clipboard")
+                },
+                onRemoveEntry: { [weak self] index in
+                    let entry = history[index]
+                    ScreenshotHistory.shared.remove(filePath: entry.filePath)
+                    NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
+                    self?.rebuildMenu()
+                }
             )
-            menu.addItem(headerItem)
-
-            for (index, entry) in history.enumerated() {
-                let item = NSMenuItem()
-                item.tag = index
-                item.target = self
-                item.action = #selector(historyItemClicked(_:))
-
-                // Build attributed title with thumbnail
-                let view = HistoryMenuItemView(entry: entry)
-                item.view = view
-                menu.addItem(item)
+            // Show 2 rows visible, scroll for more
+            let maxVisibleHeight: CGFloat = 90 * 2 + 6 + 20  // 2 rows + padding + margins
+            let needsScroll = gridView.frame.height > maxVisibleHeight
+            if needsScroll {
+                let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: gridView.frame.width, height: maxVisibleHeight))
+                scrollView.documentView = gridView
+                scrollView.hasVerticalScroller = true
+                scrollView.hasHorizontalScroller = false
+                scrollView.autohidesScrollers = true
+                scrollView.drawsBackground = false
+                scrollView.scrollerStyle = .overlay
+                gridItem.view = scrollView
+            } else {
+                gridItem.view = gridView
             }
+            menu.addItem(gridItem)
 
             menu.addItem(NSMenuItem.separator())
 
@@ -119,16 +153,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Menu Actions
 
     @objc private func captureRegion() {
-        handleHotkey()
+        handleAction(.screenshot)
     }
 
-    @objc private func historyItemClicked(_ sender: NSMenuItem) {
-        let index = sender.tag
+    private func openHistoryEntry(at index: Int) {
         let entries = ScreenshotHistory.shared.entries
         guard index >= 0, index < entries.count else { return }
         let entry = entries[index]
-        ClipboardManager.copyImage(entry.imageData)
-        ToastNotification.show("Copied to clipboard ✓")
+        let isGif = entry.filePath.hasSuffix(".gif")
+        editor.open(imageData: entry.imageData, filePath: entry.filePath, isGif: isGif, onSave: { [weak self] newData in
+            try? newData.write(to: URL(fileURLWithPath: entry.filePath))
+            ScreenshotHistory.shared.remove(filePath: entry.filePath)
+            ScreenshotHistory.shared.add(imageData: newData, filePath: entry.filePath)
+            NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
+            self?.rebuildMenu()
+            if isGif {
+                ClipboardManager.copyFileAsFinderFull(entry.filePath)
+            } else {
+                ClipboardManager.copyImage(newData)
+            }
+            ToastNotification.show("Saved and copied to clipboard")
+        }, onRemove: { [weak self] in
+            try? FileManager.default.removeItem(atPath: entry.filePath)
+            ScreenshotHistory.shared.remove(filePath: entry.filePath)
+            NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
+            self?.rebuildMenu()
+            ToastNotification.show("Deleted")
+        })
     }
 
     @objc private func clearHistory() {
@@ -142,8 +193,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
+        if let window = settingsWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let settingsView = SettingsView()
+        let hostingView = NSHostingView(rootView: settingsView)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "PixyVibe Settings"
+        window.contentView = hostingView
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        settingsWindow = window
+
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 
     @objc private func quitApp() {
@@ -152,18 +225,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Hotkey / Overlay
 
-    private func handleHotkey() {
-        if isDiffPending {
-            showOverlay(mode: .diffAfter, savedRegion: diffRegion)
-        } else {
-            showOverlay(mode: .normal)
+    private func handleAction(_ action: HotkeyAction) {
+        switch action {
+        case .screenshot:
+            showOverlay(mode: .normal, preselectedMode: .screenshot)
+        case .gifRecording:
+            showOverlay(mode: .normal, preselectedMode: .gif)
+        case .diff:
+            if isDiffPending {
+                showOverlay(mode: .diffAfter, savedRegion: diffRegion)
+            } else {
+                showOverlay(mode: .normal, preselectedMode: .diff)
+            }
         }
     }
 
-    private func showOverlay(mode: OverlayMode, savedRegion: CGRect? = nil) {
+    private func showOverlay(mode: OverlayMode, savedRegion: CGRect? = nil, preselectedMode: CaptureMode? = nil) {
         overlayWindow?.hide()
 
-        let overlay = OverlayWindow(mode: mode)
+        let overlay = OverlayWindow(mode: mode, preselectedMode: preselectedMode)
         overlay.savedRegion = savedRegion
         overlay.onScreenshot = { [weak self] region in
             self?.performScreenshot(region: region)
@@ -241,7 +321,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isDiffPending = true
         diffRegion = region
         updateTrayIcon()
-        ToastNotification.show("Before captured — make changes, then press ⇧⌘6")
+        let shortcut = ShortcutStore.shared.diff.displayString
+        ToastNotification.show("Before captured — make changes, then press \(shortcut)")
     }
 
     private func performDiffAfter(region: CGRect) {
@@ -277,8 +358,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
-        // Refresh the menu each time it opens so history is current
         rebuildMenu()
+    }
+}
+
+extension AppDelegate: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === settingsWindow {
+            settingsWindow = nil
+        }
     }
 }
 
@@ -289,122 +377,183 @@ enum OverlayMode {
     case diffAfter
 }
 
-// MARK: - History Menu Item View
+// MARK: - History Grid View (2-column grid of recent captures)
 
-class HistoryMenuItemView: NSView {
-    private let entry: ScreenshotEntry
+class HistoryGridView: NSView {
+    private let entries: [ScreenshotEntry]
+    private var onClickEntry: ((Int) -> Void)?
+    private var onCopyEntry: ((Int) -> Void)?
+    private var onRemoveEntry: ((Int) -> Void)?
 
-    init(entry: ScreenshotEntry) {
-        self.entry = entry
-        super.init(frame: NSRect(x: 0, y: 0, width: 280, height: 52))
-        setupView()
+    private let cols = 2
+    private let cellWidth: CGFloat = 150
+    private let thumbHeight: CGFloat = 90
+    private let cellPadding: CGFloat = 6
+    private let menuPadding: CGFloat = 10
+
+    private var cellRects: [NSRect] = []  // thumb rects per entry
+    private var hoveredIndex: Int? = nil
+
+    init(entries: [ScreenshotEntry],
+         onClickEntry: ((Int) -> Void)?,
+         onCopyEntry: ((Int) -> Void)?,
+         onRemoveEntry: ((Int) -> Void)?) {
+        self.entries = entries
+        self.onClickEntry = onClickEntry
+        self.onCopyEntry = onCopyEntry
+        self.onRemoveEntry = onRemoveEntry
+
+        let rows = Int(ceil(Double(entries.count) / Double(2)))
+        let totalWidth = cellWidth * 2 + cellPadding + menuPadding * 2
+        let totalHeight = CGFloat(rows) * thumbHeight + CGFloat(max(0, rows - 1)) * cellPadding + menuPadding * 2
+
+        super.init(frame: NSRect(x: 0, y: 0, width: totalWidth, height: totalHeight))
+        buildCellRects()
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not implemented")
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    private func buildCellRects() {
+        cellRects = []
+        for i in 0..<entries.count {
+            let col = i % cols
+            let row = i / cols
+            let x = menuPadding + CGFloat(col) * (cellWidth + cellPadding)
+            let y = menuPadding + CGFloat(row) * (thumbHeight + cellPadding)
+            cellRects.append(NSRect(x: x, y: y, width: cellWidth, height: thumbHeight))
+        }
     }
 
-    private var isHighlighted = false
+    // Overlay rects (inside thumb, at bottom — in flipped coords, bottom = maxY)
+    private func overlayRect(for cellRect: NSRect) -> NSRect {
+        NSRect(x: cellRect.minX, y: cellRect.maxY - 24, width: cellRect.width, height: 24)
+    }
+
+    private func copyIconRect(for cellRect: NSRect) -> NSRect {
+        NSRect(x: cellRect.maxX - 34, y: cellRect.maxY - 19, width: 14, height: 14)
+    }
+
+    private func removeIconRect(for cellRect: NSRect) -> NSRect {
+        NSRect(x: cellRect.maxX - 16, y: cellRect.maxY - 19, width: 14, height: 14)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        if isHighlighted {
-            NSColor.selectedContentBackgroundColor.setFill()
-            bounds.fill()
+
+        for (i, cellRect) in cellRects.enumerated() {
+            let entry = entries[i]
+
+            // Thumbnail
+            if let thumb = entry.thumbnail(maxSize: cellWidth) {
+                NSGraphicsContext.saveGraphicsState()
+                let clip = NSBezierPath(roundedRect: cellRect, xRadius: 5, yRadius: 5)
+                clip.addClip()
+                thumb.draw(in: cellRect)
+                NSGraphicsContext.restoreGraphicsState()
+
+                NSColor.separatorColor.setStroke()
+                let border = NSBezierPath(roundedRect: cellRect, xRadius: 5, yRadius: 5)
+                border.lineWidth = 0.5
+                border.stroke()
+            }
+
+            // Hover overlay
+            if hoveredIndex == i {
+                let ovr = overlayRect(for: cellRect)
+                NSGraphicsContext.saveGraphicsState()
+                // Clip to bottom of rounded rect
+                let clip = NSBezierPath(roundedRect: cellRect, xRadius: 5, yRadius: 5)
+                clip.addClip()
+                NSColor.black.withAlphaComponent(0.6).setFill()
+                ovr.fill()
+                NSGraphicsContext.restoreGraphicsState()
+
+                // Time label
+                let timeAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9),
+                    .foregroundColor: NSColor.white.withAlphaComponent(0.9),
+                ]
+                let timeRect = NSRect(x: cellRect.minX + 6, y: cellRect.maxY - 19, width: cellRect.width - 44, height: 14)
+                (entry.timeAgo as NSString).draw(in: timeRect, withAttributes: timeAttrs)
+
+                // Copy icon
+                if let copyImg = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil) {
+                    let tinted = copyImg.tinted(with: .white)
+                    tinted.draw(in: copyIconRect(for: cellRect))
+                }
+
+                // Remove icon
+                if let trashImg = NSImage(systemSymbolName: "trash", accessibilityDescription: nil) {
+                    let tinted = trashImg.tinted(with: .white)
+                    tinted.draw(in: removeIconRect(for: cellRect))
+                }
+            }
         }
     }
 
-    private func setupView() {
-        let hStack = NSStackView()
-        hStack.orientation = .horizontal
-        hStack.spacing = 10
-        hStack.alignment = .centerY
-        hStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hStack)
+    // MARK: - Mouse tracking
 
-        NSLayoutConstraint.activate([
-            hStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            hStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            hStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            hStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-        ])
-
-        // Thumbnail
-        let imageView = NSImageView()
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = 4
-        imageView.layer?.masksToBounds = true
-        imageView.layer?.borderWidth = 0.5
-        imageView.layer?.borderColor = NSColor.separatorColor.cgColor
-
-        if let thumb = entry.thumbnail(maxSize: 40) {
-            imageView.image = thumb
-        }
-        NSLayoutConstraint.activate([
-            imageView.widthAnchor.constraint(equalToConstant: 52),
-            imageView.heightAnchor.constraint(equalToConstant: 40),
-        ])
-        hStack.addArrangedSubview(imageView)
-
-        // Text stack
-        let textStack = NSStackView()
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 2
-
-        let nameLabel = NSTextField(labelWithString: entry.fileName)
-        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        nameLabel.textColor = isHighlighted ? .white : .labelColor
-        nameLabel.lineBreakMode = .byTruncatingMiddle
-
-        let timeLabel = NSTextField(labelWithString: entry.timeAgo)
-        timeLabel.font = NSFont.systemFont(ofSize: 10)
-        timeLabel.textColor = isHighlighted ? .white.withAlphaComponent(0.8) : .secondaryLabelColor
-
-        textStack.addArrangedSubview(nameLabel)
-        textStack.addArrangedSubview(timeLabel)
-        hStack.addArrangedSubview(textStack)
-
-        // Copy icon on the right
-        let copyIcon = NSImageView(image: NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Copy")!)
-        copyIcon.contentTintColor = .secondaryLabelColor
-        copyIcon.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            copyIcon.widthAnchor.constraint(equalToConstant: 16),
-            copyIcon.heightAnchor.constraint(equalToConstant: 16),
-        ])
-        hStack.addArrangedSubview(copyIcon)
-    }
-
-    // Handle mouse tracking for highlight
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
             owner: self
         ))
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        isHighlighted = true
-        needsDisplay = true
+    override func mouseMoved(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        let newHover = cellRects.firstIndex(where: { $0.contains(pt) })
+        if newHover != hoveredIndex {
+            hoveredIndex = newHover
+            needsDisplay = true
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
-        isHighlighted = false
+        hoveredIndex = nil
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        // Find our menu item and trigger its action
-        guard let menuItem = enclosingMenuItem else { return }
-        menuItem.menu?.cancelTracking()
-        if let target = menuItem.target, let action = menuItem.action {
-            NSApp.sendAction(action, to: target, from: menuItem)
+        let pt = convert(event.locationInWindow, from: nil)
+
+        for (i, cellRect) in cellRects.enumerated() {
+            guard cellRect.contains(pt) else { continue }
+
+            // Copy icon hit
+            if copyIconRect(for: cellRect).insetBy(dx: -6, dy: -6).contains(pt) {
+                enclosingMenuItem?.menu?.cancelTracking()
+                onCopyEntry?(i)
+                return
+            }
+            // Remove icon hit
+            if removeIconRect(for: cellRect).insetBy(dx: -6, dy: -6).contains(pt) {
+                enclosingMenuItem?.menu?.cancelTracking()
+                onRemoveEntry?(i)
+                return
+            }
+            // Thumbnail hit — open editor
+            enclosingMenuItem?.menu?.cancelTracking()
+            onClickEntry?(i)
+            return
         }
+    }
+}
+
+// Helper to tint SF Symbols for drawing
+private extension NSImage {
+    func tinted(with color: NSColor) -> NSImage {
+        let img = self.copy() as! NSImage
+        img.lockFocus()
+        color.set()
+        NSRect(origin: .zero, size: img.size).fill(using: .sourceAtop)
+        img.unlockFocus()
+        img.isTemplate = false
+        return img
     }
 }
