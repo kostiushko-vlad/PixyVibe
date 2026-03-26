@@ -47,6 +47,13 @@ struct DiffResult {
     let changePercentage: Float
 }
 
+struct CompanionDeviceInfo: Codable {
+    let device_id: String
+    let device_name: String
+    let platform: String
+    let connected_at: String
+}
+
 class RustBridge {
     static let shared = RustBridge()
 
@@ -197,5 +204,29 @@ class RustBridge {
             let filePath = result.file_path.map { String(cString: $0) } ?? ""
             return DiffResult(imageData: imageData, filePath: filePath, changePercentage: result.change_percentage)
         }
+    }
+
+    func listCompanions() -> [CompanionDeviceInfo] {
+        guard let ptr = sst_list_companions() else { return [] }
+        defer { sst_free_string(ptr) }
+        let json = String(cString: ptr)
+        guard let data = json.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([CompanionDeviceInfo].self, from: data)) ?? []
+    }
+
+    func companionLatestFrame(deviceId: String) -> Data? {
+        let result = sst_companion_latest_frame(deviceId.cString(using: .utf8))
+        defer { sst_free_result(result) }
+        guard result.error == nil, let imgPtr = result.image_data, result.image_len > 0 else { return nil }
+        return Data(bytes: imgPtr, count: Int(result.image_len))
+    }
+
+    func companionScreenshot(deviceId: String) -> CaptureResult? {
+        let result = sst_companion_screenshot(deviceId.cString(using: .utf8))
+        defer { sst_free_result(result) }
+        guard result.error == nil, let imgPtr = result.image_data else { return nil }
+        let imageData = Data(bytes: imgPtr, count: Int(result.image_len))
+        let filePath = result.file_path.map { String(cString: $0) } ?? ""
+        return CaptureResult(imageData: imageData, filePath: filePath)
     }
 }

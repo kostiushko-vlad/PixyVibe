@@ -30,10 +30,13 @@ class ImageEditorWindow {
         if let screen = NSScreen.main?.visibleFrame, let img = NSImage(data: imageData) {
             let maxW = screen.width * 0.8
             let maxH = screen.height * 0.8
-            let controlsHeight: CGFloat = isGif ? 50 : 50
+            let controlsHeight: CGFloat = 50
             let scale = min(maxW / img.size.width, (maxH - controlsHeight) / img.size.height, 1.0)
-            winWidth = max(600, img.size.width * scale)
-            winHeight = max(400, img.size.height * scale + controlsHeight)
+            let scaledW = img.size.width * scale
+            let scaledH = img.size.height * scale + controlsHeight
+            // Use scaled size directly — don't force minimums that bloat portrait images
+            winWidth = max(320, min(scaledW, maxW))
+            winHeight = max(300, min(scaledH, maxH))
         }
 
         let hostingView = NSHostingView(rootView: AnyView(content))

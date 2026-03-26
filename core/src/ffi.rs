@@ -242,19 +242,89 @@ pub extern "C" fn sst_list_companions() -> *mut c_char {
     CString::new(json).unwrap_or_default().into_raw()
 }
 
-/// Request screenshot from a companion device
+/// Request screenshot from a companion device.
+/// IMPORTANT: This blocks the calling thread. Call from a background dispatch queue.
 #[no_mangle]
 pub extern "C" fn sst_companion_screenshot(device_id: *const c_char) -> FFIScreenshotResult {
     if device_id.is_null() {
         return error_result("Null device ID");
     }
-    let _id = match unsafe { CStr::from_ptr(device_id) }.to_str() {
+    let id = match unsafe { CStr::from_ptr(device_id) }.to_str() {
         Ok(s) => s,
         Err(_) => return error_result("Invalid device ID string"),
     };
 
-    // TODO: implement companion screenshot request via WebSocket
-    error_result("Companion screenshot not yet implemented")
+    let state = match crate::get_state() {
+        Some(s) => s,
+        None => return error_result("Core not initialized"),
+    };
+
+    let rt_handle = match state.companion_runtime.read().clone() {
+        Some(h) => h,
+        None => return error_result("Companion runtime not available"),
+    };
+
+    let png_bytes = match rt_handle.block_on(
+        crate::targets::companion::request_companion_screenshot(
+            &state.companion_manager,
+            id,
+        ),
+    ) {
+        Ok(bytes) => bytes,
+        Err(e) => return error_result(&e),
+    };
+
+    // Save the PNG to the output directory
+    let file_path = match state.output_manager.save_screenshot(&png_bytes) {
+        Ok(p) => p,
+        Err(e) => return error_result(&format!("Failed to save screenshot: {}", e)),
+    };
+
+    let capture = crate::ProcessedCapture {
+        image_bytes: png_bytes,
+        format: crate::ImageOutputFormat::Png,
+        width: 0,
+        height: 0,
+        file_path: file_path.clone(),
+    };
+
+    *state.latest_capture.write() = Some(capture.clone());
+    success_result(&capture)
+}
+
+/// Get latest broadcast frame from a companion device (JPEG bytes).
+#[no_mangle]
+pub extern "C" fn sst_companion_latest_frame(device_id: *const c_char) -> FFIScreenshotResult {
+    if device_id.is_null() {
+        return error_result("Null device ID");
+    }
+    let id = match unsafe { CStr::from_ptr(device_id) }.to_str() {
+        Ok(s) => s,
+        Err(_) => return error_result("Invalid device ID string"),
+    };
+
+    let state = match crate::get_state() {
+        Some(s) => s,
+        None => return error_result("Core not initialized"),
+    };
+
+    let mgr = state.companion_manager.read();
+    match mgr.get_latest_frame(id) {
+        Some(jpeg_bytes) => {
+            let mut bytes = jpeg_bytes.clone();
+            let data_ptr = bytes.as_mut_ptr();
+            let data_len = bytes.len();
+            std::mem::forget(bytes);
+
+            FFIScreenshotResult {
+                image_data: data_ptr,
+                image_len: data_len,
+                file_path: std::ptr::null_mut(),
+                error: std::ptr::null_mut(),
+            }
+        }
+        None => error_result("No frame available"),
+    }
 }
 
 /// Free memory allocated by the core library for screenshot results

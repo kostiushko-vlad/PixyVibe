@@ -9,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlayWindow: OverlayWindow?
     private var settingsWindow: NSWindow?
     private var editor = ImageEditorWindow()
+    private var companionPreview: CompanionPreviewWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("PixyVibe: applicationDidFinishLaunching called")
@@ -82,6 +83,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.items.last?.keyEquivalent = "2"
         menu.items.last?.target = self
 
+        // Companion devices section — always show paired devices
+        let connectedDevices = RustBridge.shared.listCompanions()
+        let connectedIds = Set(connectedDevices.map { $0.device_id })
+
+        // Update paired store — use best name (skip "(Broadcast)" suffix)
+        for device in connectedDevices {
+            let name = device.device_name.replacingOccurrences(of: " (Broadcast)", with: "")
+            PairedDeviceStore.shared.upsert(deviceId: device.device_id, deviceName: name)
+        }
+
+        // Deduplicate: group by device_id, show one entry per physical device
+        var seenIds = Set<String>()
+        let pairedDevices = PairedDeviceStore.shared.devices.filter { seenIds.insert($0.deviceId).inserted }
+        if !pairedDevices.isEmpty {
+            menu.addItem(NSMenuItem.separator())
+            for device in pairedDevices {
+                let isConnected = connectedIds.contains(device.deviceId)
+
+                let item = NSMenuItem()
+                item.target = self
+                item.action = #selector(captureCompanion(_:))
+                item.representedObject = device.deviceId
+
+                // Custom view: iPhone icon + name + small status dot on the right
+                let menuWidth = menu.size.width > 0 ? menu.size.width : 320
+                let rowView = CompanionMenuRowView(frame: NSRect(x: 0, y: 0, width: menuWidth, height: 22))
+                rowView.autoresizingMask = [.width]
+                rowView.deviceId = device.deviceId
+                rowView.onTap = { [weak self] id in
+                    self?.statusItem.menu?.cancelTracking()
+                    self?.performCompanionScreenshot(deviceId: id)
+                }
+
+                let iconView = NSImageView(frame: NSRect(x: 14, y: 3, width: 14, height: 14))
+                iconView.image = NSImage(systemSymbolName: "iphone", accessibilityDescription: nil)
+                iconView.contentTintColor = .secondaryLabelColor
+                rowView.addSubview(iconView)
+
+                let label = NSTextField(labelWithString: device.deviceName)
+                label.font = NSFont.menuFont(ofSize: 14)
+                label.textColor = .labelColor
+                label.frame = NSRect(x: 34, y: 1, width: 180, height: 18)
+                rowView.addSubview(label)
+
+                let dot = NSView(frame: NSRect(x: rowView.frame.width - 20, y: 7, width: 8, height: 8))
+                dot.autoresizingMask = [.minXMargin]
+                dot.wantsLayer = true
+                dot.layer?.cornerRadius = 4
+                dot.layer?.backgroundColor = isConnected ? NSColor.systemGreen.cgColor : NSColor.systemGray.withAlphaComponent(0.4).cgColor
+                rowView.addSubview(dot)
+
+                item.view = rowView
+                menu.addItem(item)
+            }
+        }
+
         // History section
         let history = ScreenshotHistory.shared.entries
         if !history.isEmpty {
@@ -154,6 +211,106 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func captureRegion() {
         handleAction(.screenshot)
+    }
+
+    private func performCompanionScreenshot(deviceId: String? = nil) {
+        let targetId: String
+        if let id = deviceId {
+            targetId = id
+        } else if let first = RustBridge.shared.listCompanions().first {
+            targetId = first.device_id
+        } else if let first = PairedDeviceStore.shared.devices.first {
+            targetId = first.deviceId
+        } else {
+            ToastNotification.show("No iPhone connected")
+            return
+        }
+
+        // Close any existing preview for a different device
+        companionPreview?.close()
+        companionPreview = nil
+
+        // Check if this specific device is connected AND has an active broadcast
+        // (broadcast extension registers as a separate connection with same device_id)
+        let connectedDevices = RustBridge.shared.listCompanions()
+        let connectedIds = Set(connectedDevices.map { $0.device_id })
+        let isConnected = connectedIds.contains(targetId)
+        let hasLiveFrames = RustBridge.shared.companionLatestFrame(deviceId: targetId) != nil
+
+        if isConnected && hasLiveFrames {
+            openCompanionPreview(deviceId: targetId)
+        } else if isConnected {
+            // Connected but no frames — trigger broadcast and wait
+            ToastNotification.show("Starting broadcast — confirm on device")
+
+            DispatchQueue.global(qos: .utility).async {
+                let _ = RustBridge.shared.companionScreenshot(deviceId: targetId)
+            }
+
+            pollForFrames(deviceId: targetId)
+        } else {
+            // Not connected — device is offline
+            let deviceName = PairedDeviceStore.shared.devices.first(where: { $0.deviceId == targetId })?.deviceName ?? "Device"
+            ToastNotification.show("\(deviceName) is not connected — open companion app on that device")
+        }
+    }
+
+    private func pollForFrames(deviceId: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var attempts = 0
+            while attempts < 60 {
+                Thread.sleep(forTimeInterval: 0.5)
+                if RustBridge.shared.companionLatestFrame(deviceId: deviceId) != nil {
+                    DispatchQueue.main.async {
+                        self.openCompanionPreview(deviceId: deviceId)
+                    }
+                    return
+                }
+                attempts += 1
+            }
+            DispatchQueue.main.async {
+                ToastNotification.show("Broadcast didn't start — please confirm on device")
+            }
+        }
+    }
+
+    private func openCompanionPreview(deviceId: String) {
+        companionPreview?.close()
+        companionPreview = nil
+
+        let preview = CompanionPreviewWindow(deviceId: deviceId)
+        preview.onCapture = { [weak self] imageData, label in
+            self?.companionPreview = nil
+            let isGif = label.contains("GIF")
+            let filePath = self?.saveCompanionCapture(imageData, isGif: isGif) ?? ""
+            ScreenshotHistory.shared.add(imageData: imageData, filePath: filePath)
+            self?.rebuildMenu()
+            if isGif {
+                ClipboardManager.copyFileAsFinderFull(filePath)
+            } else {
+                ClipboardManager.copyImage(imageData)
+            }
+            CapturePreview.show(imageData: imageData, filePath: filePath, label: label)
+        }
+        companionPreview = preview
+        preview.show()
+    }
+
+    private func saveCompanionCapture(_ data: Data, isGif: Bool = false) -> String {
+        let dir = NSHomeDirectory() + "/.screenshottool/screenshots"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let ext = isGif ? "gif" : "png"
+        let filename = "\(formatter.string(from: Date())).\(ext)"
+        let path = (dir as NSString).appendingPathComponent(filename)
+        try? data.write(to: URL(fileURLWithPath: path))
+        return path
+    }
+
+    @objc private func captureCompanion(_ sender: NSMenuItem) {
+        guard let deviceId = sender.representedObject as? String else { return }
+        performCompanionScreenshot(deviceId: deviceId)
     }
 
     private func openHistoryEntry(at index: Int) {
@@ -257,6 +414,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.onDiffAfter = { [weak self] region in
             self?.performDiffAfter(region: region)
         }
+        overlay.onCompanionDevice = { [weak self] deviceId in
+            self?.performCompanionScreenshot(deviceId: deviceId)
+        }
         overlayWindow = overlay
         overlay.show()
     }
@@ -287,19 +447,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let pill = RecordingPill(region: region)
-        pill.show()
 
-        let clickAnimator = ClickAnimator()
-        clickAnimator.start()
+        var frameTimer: Timer?
+        var clickAnimator: ClickAnimator?
 
-        let fps = 10
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / Double(fps), repeats: true) { _ in
-            let _ = RustBridge.shared.gifAddFrame(sessionId, region: region)
+        pill.onStart = {
+            let animator = ClickAnimator()
+            animator.start()
+            clickAnimator = animator
+
+            let fps = 10
+            frameTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / Double(fps), repeats: true) { _ in
+                let _ = RustBridge.shared.gifAddFrame(sessionId, region: region)
+            }
         }
 
         pill.onStop = { [weak self] in
-            timer.invalidate()
-            clickAnimator.stop()
+            frameTimer?.invalidate()
+            clickAnimator?.stop()
             pill.close()
 
             if let result = RustBridge.shared.gifFinish(sessionId) {
@@ -311,6 +476,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ToastNotification.show("GIF encoding failed")
             }
         }
+
+        pill.onCancel = {
+            pill.close()
+            let _ = RustBridge.shared.gifFinish(sessionId)
+        }
+
+        pill.show()
     }
 
     private func performDiffBefore(region: CGRect) {
@@ -555,5 +727,62 @@ private extension NSImage {
         img.unlockFocus()
         img.isTemplate = false
         return img
+    }
+}
+
+// MARK: - Companion menu row with click support + hover highlight
+
+class CompanionMenuRowView: NSView {
+    var deviceId: String = ""
+    var onTap: ((String) -> Void)?
+    private var isHighlighted = false
+
+    override func mouseUp(with event: NSEvent) {
+        onTap?(deviceId)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isHighlighted {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(rect: bounds).fill()
+        }
+        super.draw(dirtyRect)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHighlighted = true
+        // Update label colors for highlighted state
+        for sub in subviews {
+            if let label = sub as? NSTextField {
+                label.textColor = .white
+            }
+            if let iv = sub as? NSImageView {
+                iv.contentTintColor = .white
+            }
+        }
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHighlighted = false
+        for sub in subviews {
+            if let label = sub as? NSTextField {
+                label.textColor = .labelColor
+            }
+            if let iv = sub as? NSImageView {
+                iv.contentTintColor = .secondaryLabelColor
+            }
+        }
+        needsDisplay = true
     }
 }

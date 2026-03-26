@@ -5,12 +5,14 @@ enum CaptureMode: Int, CaseIterable {
     case screenshot = 0
     case gif = 1
     case diff = 2
+    case companion = 3
 
     var label: String {
         switch self {
         case .screenshot: return "Screenshot"
         case .gif: return "Record GIF"
         case .diff: return "Diff"
+        case .companion: return "iPhone"
         }
     }
 
@@ -19,6 +21,7 @@ enum CaptureMode: Int, CaseIterable {
         case .screenshot: return "camera.viewfinder"
         case .gif: return "record.circle"
         case .diff: return "square.split.2x1"
+        case .companion: return "iphone"
         }
     }
 
@@ -27,6 +30,7 @@ enum CaptureMode: Int, CaseIterable {
         case .screenshot: return "S"
         case .gif: return "G"
         case .diff: return "D"
+        case .companion: return "I"
         }
     }
 
@@ -36,19 +40,35 @@ enum CaptureMode: Int, CaseIterable {
         case .screenshot: return store.screenshot.displayString
         case .gif: return store.gifRecording.displayString
         case .diff: return store.diff.displayString
+        case .companion: return "I"
         }
+    }
+
+    /// Core modes (always shown)
+    static let coreModes: [CaptureMode] = [.screenshot, .gif, .diff]
+
+    /// Whether companion devices are available
+    static var hasCompanionDevices: Bool {
+        !PairedDeviceStore.shared.devices.isEmpty
     }
 }
 
 class ModePickerPanel: NSPanel {
     var onModeSelected: ((CaptureMode) -> Void)?
+    /// Called when a specific companion device is selected, passes device_id
+    var onCompanionDeviceSelected: ((String) -> Void)?
     var onCancel: (() -> Void)?
     private var hostingView: NSHostingView<ModePickerContent>!
     private var selectedMode: CaptureMode = .screenshot
+    private var selectedDeviceId: String?
 
     init(initialMode: CaptureMode = .screenshot) {
         self.selectedMode = initialMode
-        let panelWidth: CGFloat = 360
+        let devices = PairedDeviceStore.shared.devices
+        let deviceCount = devices.count
+        let baseWidth: CGFloat = 360
+        let deviceWidth: CGFloat = deviceCount > 0 ? CGFloat(deviceCount) * 90.0 : 0
+        let panelWidth = baseWidth + deviceWidth
         let panelHeight: CGFloat = 82
 
         guard let screen = NSScreen.main else {
@@ -80,12 +100,25 @@ class ModePickerPanel: NSPanel {
     }
 
     private func updateContent() {
+        let devices = PairedDeviceStore.shared.devices
+        let connectedIds = Set(RustBridge.shared.listCompanions().map { $0.device_id })
+
         let content = ModePickerContent(
             selectedMode: selectedMode,
-            onSelect: { [weak self] mode in
+            selectedDeviceId: selectedDeviceId,
+            devices: devices,
+            connectedDeviceIds: connectedIds,
+            onSelectMode: { [weak self] mode in
                 self?.selectedMode = mode
+                self?.selectedDeviceId = nil
                 self?.updateContent()
                 self?.onModeSelected?(mode)
+            },
+            onSelectDevice: { [weak self] deviceId in
+                self?.selectedMode = .companion
+                self?.selectedDeviceId = deviceId
+                self?.updateContent()
+                self?.onCompanionDeviceSelected?(deviceId)
             },
             onCancel: { [weak self] in
                 self?.onCancel?()
@@ -101,6 +134,7 @@ class ModePickerPanel: NSPanel {
 
     func selectMode(_ mode: CaptureMode) {
         selectedMode = mode
+        selectedDeviceId = nil
         updateContent()
         onModeSelected?(mode)
     }
@@ -119,6 +153,15 @@ class ModePickerPanel: NSPanel {
         case 2: // D
             selectMode(.diff)
             return true
+        case 34: // I
+            // Select first paired device
+            if let first = PairedDeviceStore.shared.devices.first {
+                selectedMode = .companion
+                selectedDeviceId = first.deviceId
+                updateContent()
+                onCompanionDeviceSelected?(first.deviceId)
+            }
+            return true
         default:
             return false
         }
@@ -127,24 +170,39 @@ class ModePickerPanel: NSPanel {
 
 struct ModePickerContent: View {
     let selectedMode: CaptureMode
-    let onSelect: (CaptureMode) -> Void
+    let selectedDeviceId: String?
+    let devices: [PairedDevice]
+    let connectedDeviceIds: Set<String>
+    let onSelectMode: (CaptureMode) -> Void
+    let onSelectDevice: (String) -> Void
     let onCancel: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(CaptureMode.allCases, id: \.rawValue) { mode in
+            // Core mode buttons
+            ForEach(CaptureMode.coreModes, id: \.rawValue) { mode in
                 modeButton(mode)
-                if mode != CaptureMode.allCases.last {
+                Divider()
+                    .frame(height: 28)
+                    .opacity(0.3)
+            }
+
+            // Device buttons
+            ForEach(devices, id: \.deviceId) { device in
+                deviceButton(device)
+                if device.deviceId != devices.last?.deviceId {
                     Divider()
                         .frame(height: 28)
                         .opacity(0.3)
                 }
             }
 
-            Divider()
-                .frame(height: 28)
-                .opacity(0.3)
-                .padding(.horizontal, 4)
+            if !devices.isEmpty {
+                Divider()
+                    .frame(height: 28)
+                    .opacity(0.3)
+                    .padding(.horizontal, 4)
+            }
 
             // Close button
             Button(action: onCancel) {
@@ -162,15 +220,49 @@ struct ModePickerContent: View {
     }
 
     private func modeButton(_ mode: CaptureMode) -> some View {
-        let isSelected = mode == selectedMode
+        let isSelected = mode == selectedMode && selectedDeviceId == nil
         let shortcut = mode.shortcutDisplay
-        return Button(action: { onSelect(mode) }) {
+        return Button(action: { onSelectMode(mode) }) {
             VStack(spacing: 2) {
                 Image(systemName: mode.icon)
                     .font(.system(size: 16))
                 Text(mode.label)
                     .font(.system(size: 10, weight: .medium))
                 Text(shortcut)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .frame(width: 84, height: 52)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+    }
+
+    private func deviceButton(_ device: PairedDevice) -> some View {
+        let isSelected = selectedDeviceId == device.deviceId
+        let isConnected = connectedDeviceIds.contains(device.deviceId)
+        return Button(action: { onSelectDevice(device.deviceId) }) {
+            VStack(spacing: 2) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "iphone")
+                        .font(.system(size: 16))
+                    Circle()
+                        .fill(isConnected ? Color.green : Color.gray.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                        .offset(x: 4, y: -2)
+                }
+                Text(device.deviceName)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                Text("I")
                     .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.4))
             }

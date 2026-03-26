@@ -102,9 +102,15 @@ struct SSTScreenshotResult sst_get_latest(void);
 char *sst_list_companions(void);
 
 /**
- * Request screenshot from a companion device
+ * Request screenshot from a companion device.
+ * IMPORTANT: This blocks the calling thread. Call from a background dispatch queue.
  */
 struct SSTScreenshotResult sst_companion_screenshot(const char *device_id);
+
+/**
+ * Get latest broadcast frame from a companion device (JPEG bytes).
+ */
+struct SSTScreenshotResult sst_companion_latest_frame(const char *device_id);
 
 /**
  * Free memory allocated by the core library for screenshot results

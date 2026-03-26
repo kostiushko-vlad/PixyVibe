@@ -75,8 +75,38 @@ async fn handle_screenshot(
     Json(req): Json<ScreenshotRequest>,
 ) -> Result<Json<ScreenshotResponse>, AppError> {
     // If target_id specified, try companion device
-    if let Some(ref _target_id) = req.target_id {
-        return Err(internal_error("Companion screenshot not yet implemented"));
+    if let Some(ref target_id) = req.target_id {
+        let png_bytes = crate::targets::companion::request_companion_screenshot(
+            &state.companion_manager,
+            target_id,
+        )
+        .await
+        .map_err(|e| internal_error(e))?;
+
+        let file_path = state
+            .output_manager
+            .save_screenshot(&png_bytes)
+            .map_err(|e| internal_error(e.to_string()))?;
+
+        let capture = crate::ProcessedCapture {
+            image_bytes: png_bytes.clone(),
+            format: crate::ImageOutputFormat::Png,
+            width: 0,
+            height: 0,
+            file_path: file_path.clone(),
+        };
+        *state.latest_capture.write() = Some(capture);
+
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+        return Ok(Json(ScreenshotResponse {
+            image_base64: b64,
+            metadata: Metadata {
+                source_title: format!("Companion: {}", target_id),
+                dimensions: "unknown".to_string(),
+                timestamp: chrono::Local::now().to_rfc3339(),
+                file_path: file_path.to_string_lossy().into_owned(),
+            },
+        }));
     }
 
     // Desktop screenshot via capture callback

@@ -12,7 +12,7 @@ class FrameTransport {
         self.minFrameInterval = 1.0 / Double(fps)
     }
 
-    /// Convert a CVPixelBuffer to JPEG and send via WebSocket.
+    /// Convert a CVPixelBuffer to JPEG and send via WebSocket to all connected desktops.
     /// Rate-limited to configured fps.
     func sendFrame(from pixelBuffer: CVPixelBuffer) {
         let now = CFAbsoluteTimeGetCurrent()
@@ -20,7 +20,7 @@ class FrameTransport {
         lastFrameTime = now
 
         guard let jpegData = pixelBufferToJpeg(pixelBuffer, quality: 0.7) else { return }
-        client.sendFrame(jpegData)
+        client.sendFrameToAll(jpegData)
     }
 
     /// Convert a CGImage to JPEG and send.
@@ -31,14 +31,14 @@ class FrameTransport {
 
         let uiImage = UIImage(cgImage: cgImage)
         guard let jpegData = uiImage.jpegData(compressionQuality: 0.7) else { return }
-        client.sendFrame(jpegData)
+        client.sendFrameToAll(jpegData)
     }
 
     /// Convert a CGImage to PNG and send as screenshot result.
     func sendScreenshot(from cgImage: CGImage) {
         let uiImage = UIImage(cgImage: cgImage)
         guard let pngData = uiImage.pngData() else { return }
-        client.sendScreenshot(pngData)
+        client.sendScreenshotToAll(pngData)
     }
 
     private func pixelBufferToJpeg(_ pixelBuffer: CVPixelBuffer, quality: CGFloat) -> Data? {

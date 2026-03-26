@@ -55,19 +55,29 @@ class RecordingBorderView: NSView {
     }
 }
 
+enum RecordingPillPhase {
+    case ready
+    case recording
+}
+
 // MARK: - Recording Pill (timer + stop button)
 
 class RecordingPill: NSPanel {
+    var onStart: (() -> Void)?
     var onStop: (() -> Void)?
+    var onCancel: (() -> Void)?
+    private var phase: RecordingPillPhase = .ready
     private var startTime: Date = Date()
     private var timer: Timer?
     private var hostingView: NSHostingView<RecordingPillView>!
     private var elapsedSeconds: Int = 0
     private var borderWindow: RecordingBorderWindow?
     private var escMonitor: Any?
+    private var regionSize: NSSize
 
     init(region: CGRect) {
-        let pillWidth: CGFloat = 160
+        self.regionSize = region.size
+        let pillWidth: CGFloat = 200
         let pillHeight: CGFloat = 40
         let pillFrame = NSRect(
             x: region.midX - pillWidth / 2,
@@ -89,9 +99,13 @@ class RecordingPill: NSPanel {
         self.hasShadow = true
         self.isReleasedWhenClosed = false
 
-        let pillView = RecordingPillView(elapsed: 0) { [weak self] in
-            self?.onStop?()
-        }
+        let pillView = RecordingPillView(
+            phase: .ready,
+            elapsed: 0,
+            regionSize: regionSize,
+            onStart: { [weak self] in self?.beginRecording() },
+            onStop: { [weak self] in self?.onStop?() }
+        )
         hostingView = NSHostingView(rootView: pillView)
         self.contentView = hostingView
 
@@ -103,33 +117,52 @@ class RecordingPill: NSPanel {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
-            onStop?()
+            if phase == .ready { onCancel?() } else { onStop?() }
             return
         }
         super.keyDown(with: event)
     }
 
     func show() {
-        startTime = Date()
-        elapsedSeconds = 0
+        phase = .ready
         makeKeyAndOrderFront(nil)
         borderWindow?.orderFront(nil)
 
         // Monitor ESC key globally (pill is non-activating so keyDown may not fire)
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 {
-                self?.onStop?()
+                if self?.phase == .ready { self?.onCancel?() } else { self?.onStop?() }
                 return nil
             }
             return event
         }
+    }
+
+    private func beginRecording() {
+        phase = .recording
+        startTime = Date()
+        elapsedSeconds = 0
+        onStart?()
+
+        let pillView = RecordingPillView(
+            phase: .recording,
+            elapsed: 0,
+            regionSize: nil,
+            onStart: {},
+            onStop: { [weak self] in self?.onStop?() }
+        )
+        hostingView.rootView = pillView
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.elapsedSeconds = Int(Date().timeIntervalSince(self.startTime))
-            let pillView = RecordingPillView(elapsed: self.elapsedSeconds) { [weak self] in
-                self?.onStop?()
-            }
+            let pillView = RecordingPillView(
+                phase: .recording,
+                elapsed: self.elapsedSeconds,
+                regionSize: nil,
+                onStart: {},
+                onStop: { [weak self] in self?.onStop?() }
+            )
             self.hostingView.rootView = pillView
         }
     }
@@ -150,27 +183,53 @@ class RecordingPill: NSPanel {
 // MARK: - Pill SwiftUI View
 
 struct RecordingPillView: View {
+    let phase: RecordingPillPhase
     let elapsed: Int
+    let regionSize: NSSize?
+    let onStart: () -> Void
     let onStop: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(Color.red)
-                .frame(width: 10, height: 10)
-
-            Text("REC \(formatTime(elapsed))")
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white)
-
-            Button(action: onStop) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 12))
+            switch phase {
+            case .ready:
+                if let size = regionSize {
+                    Text("\(Int(size.width))×\(Int(size.height))")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                Button(action: onStart) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "record.circle")
+                            .font(.system(size: 11))
+                        Text("Start")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
                     .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.green, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+
+            case .recording:
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 10, height: 10)
+
+                Text("REC \(formatTime(elapsed))")
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+
+                Button(action: onStop) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white)
+                }
+                .buttonStyle(.plain)
+                .padding(4)
+                .background(Color.white.opacity(0.2), in: Circle())
             }
-            .buttonStyle(.plain)
-            .padding(4)
-            .background(Color.white.opacity(0.2), in: Circle())
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

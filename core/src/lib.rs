@@ -24,6 +24,7 @@ pub struct AppState {
     pub capture_callback: RwLock<Option<ffi::CaptureCallback>>,
     pub latest_capture: RwLock<Option<ProcessedCapture>>,
     pub api_port: RwLock<u16>,
+    pub companion_runtime: RwLock<Option<tokio::runtime::Handle>>,
     pub config: Config,
 }
 
@@ -107,6 +108,7 @@ pub fn init(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sy
         capture_callback: RwLock::new(None),
         latest_capture: RwLock::new(None),
         api_port: RwLock::new(0),
+        companion_runtime: RwLock::new(None),
         config: config.clone(),
     });
 
@@ -144,6 +146,8 @@ pub fn init(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sy
     let companion_state = state.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
+        // Store the runtime handle so FFI can block_on companion operations
+        *companion_state.companion_runtime.write() = Some(rt.handle().clone());
         rt.block_on(async {
             if let Err(e) = companion_state
                 .companion_manager
@@ -152,7 +156,11 @@ pub fn init(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sy
                 .await
             {
                 tracing::warn!("Failed to start companion listener: {}", e);
+                return;
             }
+
+            // Keep the runtime alive so the spawned accept loop continues
+            std::future::pending::<()>().await;
         });
     });
 

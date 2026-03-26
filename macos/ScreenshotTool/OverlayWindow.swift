@@ -33,6 +33,7 @@ class OverlayWindow {
     var onGifStart: ((CGRect) -> Void)?
     var onDiffBefore: ((CGRect) -> Void)?
     var onDiffAfter: ((CGRect) -> Void)?
+    var onCompanionDevice: ((String) -> Void)?
 
     private let mode: OverlayMode
     private var panels: [ScreenOverlayPanel] = []
@@ -82,6 +83,13 @@ class OverlayWindow {
         modePicker.onModeSelected = { [weak self] captureMode in
             self?.selectedCaptureMode = captureMode
             self?.regionSelectors.forEach { $0.updateHint(for: captureMode) }
+        }
+        modePicker.onCompanionDeviceSelected = { [weak self] deviceId in
+            self?.selectedCaptureMode = .companion
+            self?.hide()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                self?.onCompanionDevice?(deviceId)
+            }
         }
         modePicker.onCancel = { [weak self] in
             self?.hide()
@@ -163,6 +171,9 @@ class OverlayWindow {
                 } else {
                     self?.onDiffBefore?(rect)
                 }
+            case .companion:
+                // Handled by onModeSelected, not by region selection
+                break
             }
         }
     }

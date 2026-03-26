@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompanionDevice {
@@ -36,8 +38,16 @@ pub enum CompanionMessage {
     },
 }
 
+pub enum CompanionCommand {
+    Screenshot {
+        reply: oneshot::Sender<Result<Vec<u8>, String>>,
+    },
+}
+
 pub struct CompanionManager {
     devices: HashMap<String, CompanionDevice>,
+    connections: HashMap<String, Vec<(String, mpsc::Sender<CompanionCommand>)>>,
+    latest_frames: HashMap<String, (Vec<u8>, std::time::Instant)>,
     listener_port: u16,
 }
 
@@ -45,6 +55,8 @@ impl CompanionManager {
     pub fn new() -> Self {
         CompanionManager {
             devices: HashMap::new(),
+            connections: HashMap::new(),
+            latest_frames: HashMap::new(),
             listener_port: 0,
         }
     }
@@ -72,12 +84,68 @@ impl CompanionManager {
         }
     }
 
+    pub fn register_connection(
+        &mut self,
+        device_id: &str,
+        conn_id: &str,
+        sender: mpsc::Sender<CompanionCommand>,
+    ) {
+        self.connections
+            .entry(device_id.to_string())
+            .or_default()
+            .push((conn_id.to_string(), sender));
+        tracing::debug!(
+            "Registered connection {} for device {}",
+            conn_id,
+            device_id
+        );
+    }
+
+    pub fn unregister_connection(&mut self, device_id: &str, conn_id: &str) {
+        if let Some(conns) = self.connections.get_mut(device_id) {
+            conns.retain(|(id, _)| id != conn_id);
+            if conns.is_empty() {
+                self.connections.remove(device_id);
+                self.latest_frames.remove(device_id);
+                self.remove_device(device_id);
+            }
+        }
+    }
+
+    pub fn store_frame(&mut self, device_id: &str, jpeg_bytes: Vec<u8>) {
+        self.latest_frames
+            .insert(device_id.to_string(), (jpeg_bytes, std::time::Instant::now()));
+    }
+
+    /// Returns the latest frame only if it's less than 500ms old (broadcast actively sending).
+    pub fn get_latest_frame(&self, device_id: &str) -> Option<&Vec<u8>> {
+        self.latest_frames.get(device_id).and_then(|(bytes, ts)| {
+            if ts.elapsed() < std::time::Duration::from_millis(500) {
+                Some(bytes)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn get_senders(&self, device_id: &str) -> Vec<mpsc::Sender<CompanionCommand>> {
+        self.connections
+            .get(device_id)
+            .map(|conns| conns.iter().map(|(_, s)| s.clone()).collect())
+            .unwrap_or_default()
+    }
+
     /// Start the WebSocket listener for companion devices.
     /// Also registers the mDNS service for Bonjour discovery.
     pub async fn start_listener(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         use tokio::net::TcpListener;
 
-        let listener = TcpListener::bind("0.0.0.0:0").await?;
+        // Use fixed port 58000 so iOS devices can reconnect after sleep/restart.
+        // Fall back to random port if 58000 is busy.
+        let listener = match TcpListener::bind("0.0.0.0:58000").await {
+            Ok(l) => l,
+            Err(_) => TcpListener::bind("0.0.0.0:0").await?,
+        };
         let port = listener.local_addr()?.port();
         self.listener_port = port;
 
@@ -94,7 +162,8 @@ impl CompanionManager {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
                         tracing::info!("Companion connection from {}", addr);
-                        tokio::spawn(handle_companion_connection(stream));
+                        let peer_ip = addr.ip();
+                        tokio::spawn(handle_companion_connection(stream, peer_ip));
                     }
                     Err(e) => {
                         tracing::error!("Failed to accept companion connection: {}", e);
@@ -107,33 +176,52 @@ impl CompanionManager {
     }
 }
 
+/// Stored dns-sd child process so it gets killed on drop (app exit)
+static MDNS_CHILD: parking_lot::Mutex<Option<std::process::Child>> = parking_lot::Mutex::new(None);
+
 fn register_mdns_service(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mdns = mdns_sd::ServiceDaemon::new()?;
-    let service_type = "_screenshottool._tcp.local.";
-    let instance_name = gethostname::gethostname()
+    // Kill any previous dns-sd registration
+    if let Some(mut prev) = MDNS_CHILD.lock().take() {
+        let _ = prev.kill();
+    }
+
+    let full_hostname = gethostname::gethostname()
         .to_string_lossy()
         .into_owned();
+    let short_name = full_hostname
+        .split('.')
+        .next()
+        .unwrap_or(&full_hostname)
+        .to_string();
 
-    let service_info = mdns_sd::ServiceInfo::new(
-        service_type,
-        &instance_name,
-        &format!("{}.", instance_name),
-        "",
-        port,
-        None,
-    )?;
+    // Use macOS system dns-sd command to register via the native mDNSResponder.
+    // The mdns-sd crate's pure-Rust mDNS conflicts with the system daemon.
+    let child = std::process::Command::new("dns-sd")
+        .args([
+            "-R",
+            &short_name,
+            "_screenshottool._tcp",
+            "local",
+            &port.to_string(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
 
-    mdns.register(service_info)?;
-    tracing::info!("Registered mDNS service: {}", instance_name);
+    // Store the handle so it gets killed when the app exits
+    *MDNS_CHILD.lock() = Some(child);
 
-    // Keep mdns alive — it will be dropped when the process exits
-    std::mem::forget(mdns);
-
+    tracing::info!(
+        "Registered mDNS service: {} on port {} (via system dns-sd)",
+        short_name,
+        port
+    );
     Ok(())
 }
 
-async fn handle_companion_connection(stream: tokio::net::TcpStream) {
+async fn handle_companion_connection(stream: tokio::net::TcpStream, _peer_ip: std::net::IpAddr) {
     use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
 
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
@@ -147,75 +235,204 @@ async fn handle_companion_connection(stream: tokio::net::TcpStream) {
 
     // Send ping to identify device
     let ping_msg = serde_json::to_string(&CompanionMessage::Ping).unwrap();
-    if let Err(e) = write
-        .send(tokio_tungstenite::tungstenite::Message::Text(ping_msg))
-        .await
-    {
+    if let Err(e) = write.send(Message::Text(ping_msg)).await {
         tracing::error!("Failed to send ping: {}", e);
         return;
     }
 
-    while let Some(msg) = read.next().await {
-        match msg {
-            Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
-                match serde_json::from_str::<CompanionMessage>(&text) {
-                    Ok(CompanionMessage::Pong {
-                        device_name,
-                        device_id,
-                    }) => {
-                        tracing::info!("Device identified: {} ({})", device_name, device_id);
-                        if let Some(state) = crate::get_state() {
-                            state.companion_manager.write().add_device(CompanionDevice {
-                                device_id: device_id.clone(),
-                                device_name,
-                                platform: "unknown".to_string(),
-                                connected_at: chrono::Utc::now().to_rfc3339(),
-                            });
-                        }
-                    }
-                    Ok(CompanionMessage::Frame { data, timestamp: _ }) => {
-                        // Decode base64 JPEG frame from companion
-                        if let Ok(jpeg_bytes) = base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &data,
-                        ) {
-                            tracing::debug!(
-                                "Received frame from companion: {} bytes",
-                                jpeg_bytes.len()
-                            );
-                            // Process frame through image pipeline
-                            // This could be fed into a GIF session or returned as screenshot
-                        }
-                    }
-                    Ok(CompanionMessage::ScreenshotResult { data }) => {
-                        if let Ok(png_bytes) = base64::Engine::decode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &data,
-                        ) {
-                            tracing::debug!(
-                                "Received screenshot from companion: {} bytes",
-                                png_bytes.len()
-                            );
-                        }
-                    }
-                    Ok(CompanionMessage::RecordingStopped) => {
-                        tracing::info!("Companion stopped recording");
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!("Invalid companion message: {}", e);
-                    }
+    // Wait for pong to identify the device
+    let (device_id, device_name) = loop {
+        match read.next().await {
+            Some(Ok(Message::Text(text))) => {
+                if let Ok(CompanionMessage::Pong {
+                    device_name,
+                    device_id,
+                }) = serde_json::from_str(&text)
+                {
+                    break (device_id, device_name);
                 }
             }
-            Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
-                tracing::info!("Companion disconnected");
-                break;
+            Some(Err(e)) => {
+                tracing::error!("Error waiting for pong: {}", e);
+                return;
             }
-            Err(e) => {
-                tracing::error!("Companion WebSocket error: {}", e);
-                break;
+            None => {
+                tracing::info!("Connection closed before pong");
+                return;
             }
             _ => {}
         }
+    };
+
+    tracing::info!("Device identified: {} ({})", device_name, device_id);
+
+    // Register device and command channel
+    let conn_id = uuid::Uuid::new_v4().to_string();
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<CompanionCommand>(16);
+
+    if let Some(state) = crate::get_state() {
+        let mut mgr = state.companion_manager.write();
+        mgr.add_device(CompanionDevice {
+            device_id: device_id.clone(),
+            device_name: device_name.clone(),
+            platform: "unknown".to_string(),
+            connected_at: chrono::Utc::now().to_rfc3339(),
+        });
+        mgr.register_connection(&device_id, &conn_id, cmd_tx);
+    }
+
+    // Pending screenshot reply — only one at a time per connection
+    let mut pending_screenshot: Option<oneshot::Sender<Result<Vec<u8>, String>>> = None;
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    ping_interval.tick().await; // consume immediate first tick
+
+    loop {
+        tokio::select! {
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<CompanionMessage>(&text) {
+                            Ok(CompanionMessage::Pong { .. }) => {
+                                // keepalive pong, ignore
+                            }
+                            Ok(CompanionMessage::Frame { data, timestamp: _ }) => {
+                                if let Ok(jpeg_bytes) = base64::Engine::decode(
+                                    &base64::engine::general_purpose::STANDARD,
+                                    &data,
+                                ) {
+                                    if let Some(state) = crate::get_state() {
+                                        state.companion_manager.write().store_frame(&device_id, jpeg_bytes);
+                                    }
+                                }
+                            }
+                            Ok(CompanionMessage::ScreenshotResult { data }) => {
+                                match base64::Engine::decode(
+                                    &base64::engine::general_purpose::STANDARD,
+                                    &data,
+                                ) {
+                                    Ok(png_bytes) => {
+                                        tracing::info!(
+                                            "Received screenshot from companion: {} bytes",
+                                            png_bytes.len()
+                                        );
+                                        if let Some(reply) = pending_screenshot.take() {
+                                            let _ = reply.send(Ok(png_bytes));
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to decode screenshot data: {}", e);
+                                        if let Some(reply) = pending_screenshot.take() {
+                                            let _ = reply.send(Err(format!("decode error: {}", e)));
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(CompanionMessage::RecordingStopped) => {
+                                tracing::info!("Companion stopped recording");
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::warn!("Invalid companion message: {}", e);
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        tracing::info!("Companion {} disconnected", device_name);
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("Companion WebSocket error: {}", e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(CompanionCommand::Screenshot { reply }) => {
+                        let msg = serde_json::to_string(&CompanionMessage::ScreenshotRequest).unwrap();
+                        if let Err(e) = write.send(Message::Text(msg)).await {
+                            tracing::error!("Failed to send screenshot request: {}", e);
+                            let _ = reply.send(Err(format!("send error: {}", e)));
+                        } else {
+                            pending_screenshot = Some(reply);
+                        }
+                    }
+                    None => {
+                        // Command channel closed
+                        break;
+                    }
+                }
+            }
+            _ = ping_interval.tick() => {
+                let ping_msg = serde_json::to_string(&CompanionMessage::Ping).unwrap();
+                if let Err(e) = write.send(Message::Text(ping_msg)).await {
+                    tracing::error!("Failed to send keepalive ping: {}", e);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Cleanup
+    if let Some(state) = crate::get_state() {
+        state
+            .companion_manager
+            .write()
+            .unregister_connection(&device_id, &conn_id);
+    }
+}
+
+/// Request a screenshot from a companion device.
+/// Sends the command to all connections for the device and returns the first successful result.
+pub async fn request_companion_screenshot(
+    manager: &parking_lot::RwLock<CompanionManager>,
+    device_id: &str,
+) -> Result<Vec<u8>, String> {
+    let senders = {
+        let mgr = manager.read();
+        mgr.get_senders(device_id)
+    };
+
+    if senders.is_empty() {
+        return Err(format!("No connections for device {}", device_id));
+    }
+
+    // Use a shared slot for first-response-wins
+    let result_tx = Arc::new(tokio::sync::Mutex::new(
+        None::<oneshot::Sender<Result<Vec<u8>, String>>>,
+    ));
+    let (final_tx, final_rx) = oneshot::channel::<Result<Vec<u8>, String>>();
+    {
+        let mut slot = result_tx.lock().await;
+        *slot = Some(final_tx);
+    }
+
+    for sender in senders {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let result_tx = result_tx.clone();
+
+        if sender
+            .send(CompanionCommand::Screenshot { reply: reply_tx })
+            .await
+            .is_err()
+        {
+            continue;
+        }
+
+        tokio::spawn(async move {
+            if let Ok(result) = reply_rx.await {
+                let mut slot = result_tx.lock().await;
+                if let Some(tx) = slot.take() {
+                    let _ = tx.send(result);
+                }
+            }
+        });
+    }
+
+    match tokio::time::timeout(std::time::Duration::from_secs(10), final_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err("All connections dropped without responding".to_string()),
+        Err(_) => Err("Screenshot request timed out (10s)".to_string()),
     }
 }
