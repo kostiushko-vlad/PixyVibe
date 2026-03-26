@@ -115,6 +115,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.statusItem.menu?.cancelTracking()
                     self?.performCompanionScreenshot(deviceId: id)
                 }
+                rowView.onRemove = { [weak self] id in
+                    self?.statusItem.menu?.cancelTracking()
+                    PairedDeviceStore.shared.remove(deviceId: id)
+                    self?.rebuildMenu()
+                }
+                rowView.setupRemoveButton()
 
                 let iconView = NSImageView(frame: NSRect(x: 14, y: 3, width: 14, height: 14))
                 iconView.image = NSImage(systemSymbolName: "iphone", accessibilityDescription: nil)
@@ -735,54 +741,62 @@ private extension NSImage {
 class CompanionMenuRowView: NSView {
     var deviceId: String = ""
     var onTap: ((String) -> Void)?
+    var onRemove: ((String) -> Void)?
     private var isHighlighted = false
+    private var removeButton: NSButton?
 
     override func mouseUp(with event: NSEvent) {
+        // Check if click is on the remove button area
+        if let btn = removeButton, btn.isHidden == false {
+            let pt = convert(event.locationInWindow, from: nil)
+            if btn.frame.insetBy(dx: -4, dy: -4).contains(pt) {
+                return // handled by button action
+            }
+        }
         onTap?(deviceId)
     }
 
+    func setupRemoveButton() {
+        let btn = NSButton(frame: NSRect(x: frame.width - 38, y: 3, width: 14, height: 14))
+        btn.autoresizingMask = [.minXMargin]
+        btn.bezelStyle = .inline
+        btn.isBordered = false
+        btn.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove")
+        btn.contentTintColor = .secondaryLabelColor
+        btn.target = self
+        btn.action = #selector(removeClicked)
+        btn.isHidden = true
+        addSubview(btn)
+        removeButton = btn
+    }
+
+    @objc private func removeClicked() {
+        onRemove?(deviceId)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        if isHighlighted {
+        let highlighted = enclosingMenuItem?.isHighlighted ?? false
+
+        if highlighted {
             NSColor.selectedContentBackgroundColor.setFill()
             NSBezierPath(rect: bounds).fill()
         }
+
+        // Update subview appearance when highlight state changes
+        if highlighted != isHighlighted {
+            isHighlighted = highlighted
+            removeButton?.isHidden = !highlighted
+            removeButton?.contentTintColor = highlighted ? .white : .secondaryLabelColor
+            for sub in subviews {
+                if let label = sub as? NSTextField {
+                    label.textColor = highlighted ? .white : .labelColor
+                }
+                if let iv = sub as? NSImageView, iv !== removeButton {
+                    iv.contentTintColor = highlighted ? .white : .secondaryLabelColor
+                }
+            }
+        }
+
         super.draw(dirtyRect)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp],
-            owner: self
-        ))
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHighlighted = true
-        // Update label colors for highlighted state
-        for sub in subviews {
-            if let label = sub as? NSTextField {
-                label.textColor = .white
-            }
-            if let iv = sub as? NSImageView {
-                iv.contentTintColor = .white
-            }
-        }
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHighlighted = false
-        for sub in subviews {
-            if let label = sub as? NSTextField {
-                label.textColor = .labelColor
-            }
-            if let iv = sub as? NSImageView {
-                iv.contentTintColor = .secondaryLabelColor
-            }
-        }
-        needsDisplay = true
     }
 }

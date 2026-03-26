@@ -2,11 +2,11 @@ import Cocoa
 
 // MARK: - Single-screen overlay panel (one per display)
 
-class ScreenOverlayPanel: NSPanel {
+class ScreenOverlayPanel: NSWindow {
     init(screen: NSScreen) {
         super.init(
             contentRect: screen.frame,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: .borderless,
             backing: .buffered,
             defer: false
         )
@@ -18,8 +18,6 @@ class ScreenOverlayPanel: NSPanel {
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         self.hasShadow = false
         self.isReleasedWhenClosed = false
-        self.becomesKeyOnlyIfNeeded = false
-        self.isFloatingPanel = true
     }
 
     override var canBecomeKey: Bool { true }
@@ -60,12 +58,18 @@ class OverlayWindow {
             selector.mode = mode
             selector.onRegionSelected = { [weak self] localRect in
                 // Convert from view-local coordinates to global screen coordinates
-                let globalRect = CGRect(
+                var globalRect = CGRect(
                     x: screen.frame.origin.x + localRect.origin.x,
                     y: screen.frame.origin.y + localRect.origin.y,
                     width: localRect.width,
                     height: localRect.height
                 )
+                // If selection reaches near the top of screen, extend to include menu bar
+                let menuBarThreshold: CGFloat = 40
+                let distanceToTop = screen.frame.maxY - globalRect.maxY
+                if distanceToTop < menuBarThreshold && distanceToTop > 0 {
+                    globalRect.size.height += distanceToTop
+                }
                 self?.handleRegionSelected(globalRect)
             }
             selector.onKeyDown = { [weak self] event in

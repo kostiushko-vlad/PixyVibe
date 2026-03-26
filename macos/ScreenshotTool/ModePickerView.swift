@@ -153,13 +153,17 @@ class ModePickerPanel: NSPanel {
         case 2: // D
             selectMode(.diff)
             return true
-        case 34: // I
-            // Select first paired device
-            if let first = PairedDeviceStore.shared.devices.first {
-                selectedMode = .companion
-                selectedDeviceId = first.deviceId
-                updateContent()
-                onCompanionDeviceSelected?(first.deviceId)
+        case 18, 19, 20, 21, 23, 22, 26, 28, 25: // 1-9 keys
+            let numberMap: [UInt16: Int] = [18:1, 19:2, 20:3, 21:4, 23:5, 22:6, 26:7, 28:8, 25:9]
+            if let number = numberMap[event.keyCode] {
+                let devices = PairedDeviceStore.shared.devices
+                let index = number - 1
+                if index < devices.count {
+                    selectedMode = .companion
+                    selectedDeviceId = devices[index].deviceId
+                    updateContent()
+                    onCompanionDeviceSelected?(devices[index].deviceId)
+                }
             }
             return true
         default:
@@ -188,8 +192,8 @@ struct ModePickerContent: View {
             }
 
             // Device buttons
-            ForEach(devices, id: \.deviceId) { device in
-                deviceButton(device)
+            ForEach(Array(devices.enumerated()), id: \.element.deviceId) { index, device in
+                deviceButton(device, number: index + 1)
                 if device.deviceId != devices.last?.deviceId {
                     Divider()
                         .frame(height: 28)
@@ -246,7 +250,7 @@ struct ModePickerContent: View {
         .contentShape(Rectangle())
     }
 
-    private func deviceButton(_ device: PairedDevice) -> some View {
+    private func deviceButton(_ device: PairedDevice, number: Int) -> some View {
         let isSelected = selectedDeviceId == device.deviceId
         let isConnected = connectedDeviceIds.contains(device.deviceId)
         return Button(action: { onSelectDevice(device.deviceId) }) {
@@ -262,7 +266,7 @@ struct ModePickerContent: View {
                 Text(device.deviceName)
                     .font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
-                Text("I")
+                Text("\(number)")
                     .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.4))
             }
