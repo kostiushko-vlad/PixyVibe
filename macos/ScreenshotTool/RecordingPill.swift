@@ -79,9 +79,14 @@ class RecordingPill: NSPanel {
         self.regionSize = region.size
         let pillWidth: CGFloat = 200
         let pillHeight: CGFloat = 40
+        // Position above region, but flip below if it would go off-screen
+        let screenMaxY = NSScreen.main?.frame.maxY ?? region.maxY + 100
+        let aboveY = region.maxY + 12
+        let belowY = region.minY - pillHeight - 12
+        let pillY = (aboveY + pillHeight > screenMaxY) ? belowY : aboveY
         let pillFrame = NSRect(
             x: region.midX - pillWidth / 2,
-            y: region.maxY + 12,
+            y: pillY,
             width: pillWidth,
             height: pillHeight
         )
@@ -222,18 +227,24 @@ struct RecordingPillView: View {
                     .foregroundColor(.white)
 
                 Button(action: onStop) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white)
+                    HStack(spacing: 4) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 11))
+                        Text("Stop")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.red, in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
-                .padding(4)
-                .background(Color.white.opacity(0.2), in: Circle())
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .background(Color.black.opacity(0.8), in: Capsule())
+        .fixedSize()
     }
 
     private func formatTime(_ seconds: Int) -> String {

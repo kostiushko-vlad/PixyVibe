@@ -191,25 +191,16 @@ struct CapturePreviewView: View {
     let onDelete: () -> Void
     let onClose: () -> Void
 
-    private var previewWidth: CGFloat {
-        if isGif, let img = NSImage(data: imageData), img.size.height > img.size.width {
-            let ratio = img.size.width / max(img.size.height, 1)
-            return min(200, 400 * ratio) + 24 // image width + horizontal padding
-        }
-        return 400
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Image preview — click to edit
             Group {
                 if isGif, let img = NSImage(data: imageData) {
                     let ratio = img.size.width / max(img.size.height, 1)
-                    let isPortrait = img.size.height > img.size.width
-                    let w: CGFloat = isPortrait ? min(200, 400 * ratio) : 400
-                    let h: CGFloat = w / ratio
+                    let maxH: CGFloat = min(ratio < 1 ? 400 : 240, 400)
                     AnimatedGIFView(data: imageData)
-                        .frame(width: w, height: min(h, 400))
+                        .aspectRatio(ratio, contentMode: .fit)
+                        .frame(maxWidth: 400, maxHeight: maxH)
                 } else if let nsImage = NSImage(data: imageData) {
                     Image(nsImage: nsImage)
                         .resizable()
@@ -299,7 +290,7 @@ struct CapturePreviewView: View {
             .padding(.top, 8)
             .padding(.bottom, 12)
         }
-        .frame(width: previewWidth)
+        .frame(width: 400)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
