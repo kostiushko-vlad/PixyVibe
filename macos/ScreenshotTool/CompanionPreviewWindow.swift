@@ -58,7 +58,7 @@ class CompanionPreviewWindow {
         let imageSize = initialImage?.size ?? NSSize(width: 390, height: 844)
 
         let screen = NSScreen.main ?? NSScreen.screens[0]
-        let maxHeight = screen.frame.height * 0.8
+        let maxHeight = screen.frame.height * 0.75
         let scale = min(1.0, maxHeight / imageSize.height)
         let windowSize = NSSize(width: imageSize.width * scale, height: imageSize.height * scale)
 

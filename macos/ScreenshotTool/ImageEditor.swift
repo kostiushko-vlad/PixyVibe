@@ -24,19 +24,25 @@ class ImageEditorWindow {
             }, onClose: closeAction)
         }
 
-        // Size window to fit the image, capped to 80% of screen
-        var winWidth: CGFloat = 820
-        var winHeight: CGFloat = 620
-        if let screen = NSScreen.main?.visibleFrame, let img = NSImage(data: imageData) {
-            let maxW = screen.width * 0.8
-            let maxH = screen.height * 0.8
-            let controlsHeight: CGFloat = 50
-            let scale = min(maxW / img.size.width, (maxH - controlsHeight) / img.size.height, 1.0)
-            let scaledW = img.size.width * scale
-            let scaledH = img.size.height * scale + controlsHeight
-            // Use scaled size directly — don't force minimums that bloat portrait images
-            winWidth = max(320, min(scaledW, maxW))
-            winHeight = max(300, min(scaledH, maxH))
+        // Size window to fit the image, capped to screen percentage
+        var winWidth: CGFloat = 320
+        var winHeight: CGFloat = 400
+        if let screen = NSScreen.main?.visibleFrame {
+            if let img = NSImage(data: imageData) {
+                let isPortrait = img.size.height > img.size.width * 1.3
+                let maxW = isPortrait ? min(screen.width * 0.5625, 787) : screen.width * 0.7
+                let maxH = isPortrait ? min(screen.height * 1.0, 1125) : screen.height * 0.7
+                let controlsHeight: CGFloat = 50
+                let scale = min(maxW / img.size.width, (maxH - controlsHeight) / img.size.height, 1.0)
+                let scaledW = img.size.width * scale
+                let scaledH = img.size.height * scale + controlsHeight
+                winWidth = max(280, min(scaledW, maxW))
+                winHeight = max(250, min(scaledH, maxH))
+            } else {
+                // NSImage failed to load — use small defaults
+                winWidth = 320
+                winHeight = 400
+            }
         }
 
         let hostingView = NSHostingView(rootView: AnyView(content))
@@ -48,6 +54,8 @@ class ImageEditorWindow {
         )
         win.title = isGif ? "GIF Player" : "Edit Screenshot"
         win.contentView = hostingView
+        // Force window to calculated size — NSHostingView may try to expand to image dimensions
+        win.setContentSize(NSSize(width: winWidth, height: winHeight))
         win.center()
         win.isReleasedWhenClosed = false
         win.makeKeyAndOrderFront(nil)
@@ -988,8 +996,10 @@ struct GifPlayerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ControllableGIFView(data: imageData, isPlaying: isPlaying)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geo in
+                ControllableGIFView(data: imageData, isPlaying: isPlaying)
+                    .frame(width: geo.size.width, height: geo.size.height)
+            }
 
             HStack {
                 Button(action: { isPlaying.toggle() }) {
@@ -1020,6 +1030,10 @@ struct ControllableGIFView: NSViewRepresentable {
         imageView.animates = isPlaying
         imageView.canDrawSubviewsIntoLayer = true
         imageView.wantsLayer = true
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        imageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        imageView.setContentHuggingPriority(.defaultLow, for: .vertical)
         if let image = NSImage(data: data) {
             imageView.image = image
         }
