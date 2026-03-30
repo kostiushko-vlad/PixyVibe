@@ -94,17 +94,24 @@ class ClickRingView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
         let inset: CGFloat = 2
         let rect = bounds.insetBy(dx: inset, dy: inset)
 
-        // White ring
+        // Gradient ring
         let path = NSBezierPath(ovalIn: rect)
         path.lineWidth = 2
-        NSColor.white.withAlphaComponent(0.7).setStroke()
-        path.stroke()
 
-        // Subtle filled center
-        NSColor.white.withAlphaComponent(0.15).setFill()
+        if let gradient = PV.Gradients.cgAccent() {
+            path.strokeWithGradient(gradient, lineWidth: 2, in: ctx)
+        } else {
+            NSColor.white.withAlphaComponent(0.7).setStroke()
+            path.stroke()
+        }
+
+        // Subtle gradient-tinted fill
+        NSColor(hex: 0x10B981, alpha: 0.1).setFill()
         path.fill()
     }
 }

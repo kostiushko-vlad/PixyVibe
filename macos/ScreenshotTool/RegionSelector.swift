@@ -111,43 +111,63 @@ class RegionSelectorView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        // Semi-transparent dark overlay
-        NSColor.black.withAlphaComponent(0.35).setFill()
+        // Blue-tinted semi-transparent overlay
+        NSColor(srgbRed: 0.05, green: 0.06, blue: 0.08, alpha: 0.45).setFill()
         bounds.fill()
 
         guard let rect = currentRect else { return }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
         // Clear the selected region
         NSColor.clear.setFill()
         rect.fill(using: .copy)
 
-        // White border
-        NSColor.white.setStroke()
-        let borderPath = NSBezierPath(rect: rect)
-        borderPath.lineWidth = 2
-        borderPath.stroke()
+        // Gradient selection border
+        if let gradient = PV.Gradients.cgAccent() {
+            let borderPath = NSBezierPath(rect: rect)
+            borderPath.strokeWithGradient(gradient, lineWidth: 2, in: ctx)
+        } else {
+            NSColor.white.setStroke()
+            let borderPath = NSBezierPath(rect: rect)
+            borderPath.lineWidth = 2
+            borderPath.stroke()
+        }
 
-        // Dimensions label
+        // Dimensions label — styled pill
         let labelText = "\(Int(rect.width)) × \(Int(rect.height))"
         let dimAttrs: [NSAttributedString.Key: Any] = [
-            .foregroundColor: NSColor.white,
+            .foregroundColor: PV.Colors.nsTextPrimary,
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium),
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7)
         ]
         let labelSize = (labelText as NSString).size(withAttributes: dimAttrs)
+        let pillPadH: CGFloat = 8
+        let pillPadV: CGFloat = 3
+        let pillRect = NSRect(
+            x: rect.midX - (labelSize.width + pillPadH * 2) / 2,
+            y: rect.minY - labelSize.height - pillPadV * 2 - 6,
+            width: labelSize.width + pillPadH * 2,
+            height: labelSize.height + pillPadV * 2
+        )
+        let pillPath = NSBezierPath(roundedRect: pillRect, xRadius: 6, yRadius: 6)
+        PV.Colors.nsSurface.setFill()
+        pillPath.fill()
+        PV.Border.nsThinColor.setStroke()
+        pillPath.lineWidth = 0.5
+        pillPath.stroke()
+
         let labelOrigin = NSPoint(
-            x: rect.midX - labelSize.width / 2,
-            y: rect.minY - labelSize.height - 6
+            x: pillRect.midX - labelSize.width / 2,
+            y: pillRect.midY - labelSize.height / 2
         )
         (labelText as NSString).draw(at: labelOrigin, withAttributes: dimAttrs)
 
         // Draw confirm button when pre-selected (diff-after mode)
         if isPreselected {
-            drawConfirmButton(below: rect)
+            drawConfirmButton(below: rect, ctx: ctx)
         }
     }
 
-    private func drawConfirmButton(below rect: NSRect) {
+    private func drawConfirmButton(below rect: NSRect, ctx: CGContext) {
         let buttonText = "  Capture After  "
         let hintText = "or press Enter  ·  drag to re-select"
 
@@ -159,7 +179,7 @@ class RegionSelectorView: NSView {
             .font: buttonFont,
         ]
         let hintAttrs: [NSAttributedString.Key: Any] = [
-            .foregroundColor: NSColor.white.withAlphaComponent(0.6),
+            .foregroundColor: PV.Colors.nsTextSecondary,
             .font: hintFont,
         ]
 
@@ -175,7 +195,7 @@ class RegionSelectorView: NSView {
         let barX = rect.midX - totalWidth / 2
         let barY = rect.minY - totalHeight - 30
 
-        // Confirm button background
+        // Confirm button with gradient fill
         let btnRect = NSRect(
             x: barX,
             y: barY,
@@ -183,8 +203,22 @@ class RegionSelectorView: NSView {
             height: totalHeight
         )
         let btnPath = NSBezierPath(roundedRect: btnRect, xRadius: 8, yRadius: 8)
-        NSColor.controlAccentColor.setFill()
-        btnPath.fill()
+
+        if let gradient = PV.Gradients.cgAccent() {
+            ctx.saveGState()
+            ctx.addPath(btnPath.cgPathForStroke())
+            ctx.clip()
+            ctx.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: btnRect.minX, y: btnRect.midY),
+                end: CGPoint(x: btnRect.maxX, y: btnRect.midY),
+                options: []
+            )
+            ctx.restoreGState()
+        } else {
+            NSColor.controlAccentColor.setFill()
+            btnPath.fill()
+        }
 
         // Button text
         let btnTextOrigin = NSPoint(

@@ -43,7 +43,7 @@ class CompanionPreviewWindow {
     private var window: NSWindow?
     private var imageView: NSImageView?
     private var regionSelector: CompanionRegionSelector?
-    private var toolbar: CompanionToolbarPanel?
+    // toolbar is now embedded — see embeddedToolbarView
     private var frameTimer: Timer?
     private let deviceId: String
     private var currentFrameData: Data?
@@ -58,11 +58,13 @@ class CompanionPreviewWindow {
     private var gifEscMonitor: Any?
 
     private var waitingForBroadcast: Bool
+    private var notConnected: Bool
     private var waitingOverlay: NSView?
 
-    init(deviceId: String, waitingForBroadcast: Bool = false) {
+    init(deviceId: String, waitingForBroadcast: Bool = false, notConnected: Bool = false) {
         self.deviceId = deviceId
         self.waitingForBroadcast = waitingForBroadcast
+        self.notConnected = notConnected
     }
 
     func show() {
@@ -91,7 +93,7 @@ class CompanionPreviewWindow {
         win.title = "iPhone Live View — drag to capture"
         win.level = .floating
         win.isReleasedWhenClosed = false
-        win.backgroundColor = .black
+        win.backgroundColor = NSColor(hex: 0x0D0F14)
 
         let iv = NSImageView(frame: NSRect(origin: .zero, size: windowSize))
         iv.imageScaling = .scaleProportionallyUpOrDown
@@ -151,8 +153,19 @@ class CompanionPreviewWindow {
             selector.isHidden = true
         }
 
-        // Toolbar below the window
-        showToolbar(below: win)
+        // Show not-connected overlay
+        if notConnected {
+            let deviceName = PairedDeviceStore.shared.devices.first(where: { $0.deviceId == deviceId })?.deviceName ?? "Device"
+            let overlay = NSHostingView(rootView: DeviceNotConnectedView(deviceName: deviceName))
+            overlay.frame = NSRect(origin: .zero, size: windowSize)
+            overlay.autoresizingMask = [.width, .height]
+            contentView.addSubview(overlay)
+            waitingOverlay = overlay
+            selector.isHidden = true
+        }
+
+        // Toolbar as child window attached to bottom
+        showToolbar(attachedTo: win)
 
         // Auto-show Start button if saved mode is GIF + Full
         if !waitingForBroadcast {
@@ -170,72 +183,139 @@ class CompanionPreviewWindow {
         else if recordingState == .ready { cancelGifSetup() }
         frameTimer?.invalidate()
         frameTimer = nil
-        toolbar?.orderOut(nil)
-        toolbar = nil
+        toolbarPanel?.orderOut(nil)
+        toolbarPanel = nil
         NotificationCenter.default.removeObserver(self)
         window?.orderOut(nil)
         window = nil
         NSCursor.arrow.set()
     }
 
-    private func showToolbar(below win: NSWindow) {
-        let toolbarFrame = NSRect(
-            x: win.frame.midX,
-            y: win.frame.minY - 52,
-            width: 1,
-            height: 1
+    private var toolbarPanel: CompanionToolbarPanel?
+
+    private func showToolbar(attachedTo win: NSWindow) {
+        rebuildToolbar()
+        if let panel = toolbarPanel {
+            win.addChildWindow(panel, ordered: .below)
+        }
+    }
+
+    private func rebuildToolbar() {
+        guard let win = window else { return }
+        let oldPanel = toolbarPanel
+
+        let content = CompanionToolbarContent(
+            selectedMode: captureMode,
+            selectedArea: areaMode,
+            showAreaToggle: captureMode == .gif && recordingState != .recording,
+            recordingState: recordingState,
+            onModeChange: { [weak self] mode in
+                self?.captureMode = mode
+                mode.save()
+                self?.updateTitle()
+                let isFullGif = mode == .gif && self?.areaMode == .fullScreen
+                self?.regionSelector?.usesCrosshair = !isFullGif
+                (isFullGif ? NSCursor.arrow : NSCursor.crosshair).set()
+                if mode == .screenshot {
+                    self?.regionSelector?.isDimmed = false
+                } else {
+                    self?.regionSelector?.isDimmed = (self?.areaMode == .region)
+                }
+                if self?.recordingState == .ready { self?.cancelGifSetup() }
+                DispatchQueue.main.async {
+                    self?.rebuildToolbar()
+                    self?.updateGifFullScreenState()
+                }
+            },
+            onAreaChange: { [weak self] area in
+                self?.areaMode = area
+                area.save()
+                self?.updateTitle()
+                self?.regionSelector?.isDimmed = (area == .region)
+                let isFullGif = self?.captureMode == .gif && area == .fullScreen
+                self?.regionSelector?.usesCrosshair = !isFullGif
+                (isFullGif ? NSCursor.arrow : NSCursor.crosshair).set()
+                if self?.recordingState == .ready { self?.cancelGifSetup() }
+                DispatchQueue.main.async {
+                    self?.rebuildToolbar()
+                    self?.updateGifFullScreenState()
+                }
+            },
+            onStart: { [weak self] in self?.beginGifRecording() },
+            onStop: { [weak self] in self?.stopGifRecording() }
         )
 
-        let panel = CompanionToolbarPanel(frame: toolbarFrame, mode: captureMode, area: areaMode, recordingState: .idle)
-        panel.onModeChanged = { [weak self, weak panel] mode in
-            self?.captureMode = mode
-            mode.save()
-            self?.updateTitle()
-            let isFullGif = mode == .gif && self?.areaMode == .fullScreen
-            self?.regionSelector?.usesCrosshair = !isFullGif
-            (isFullGif ? NSCursor.arrow : NSCursor.crosshair).set()
-            if mode == .screenshot {
-                self?.regionSelector?.isDimmed = false
-            } else {
-                self?.regionSelector?.isDimmed = (self?.areaMode == .region)
-            }
-            // Cancel any pending GIF setup when switching modes
-            if self?.recordingState == .ready {
-                self?.cancelGifSetup()
-            }
-            DispatchQueue.main.async {
-                panel?.rebuildContent(mode: mode, area: self?.areaMode ?? .region, recordingState: self?.recordingState ?? .idle)
-                self?.updateGifFullScreenState()
-            }
+        let hosting = NSHostingView(rootView: content)
+        let fitting = hosting.fittingSize
+        let panelWidth = max(fitting.width, 200)
+        let panelHeight = fitting.height
+
+        let panelFrame = NSRect(
+            x: win.frame.midX - panelWidth / 2,
+            y: win.frame.minY - panelHeight - 4,
+            width: panelWidth,
+            height: panelHeight
+        )
+
+        if let old = oldPanel {
+            old.contentView = hosting
+            old.setFrame(panelFrame, display: true)
+        } else {
+            let panel = CompanionToolbarPanel(
+                frame: panelFrame,
+                mode: captureMode,
+                area: areaMode,
+                recordingState: recordingState
+            )
+            panel.contentView = hosting
+            panel.setFrame(panelFrame, display: true)
+            panel.orderFront(nil)
+            toolbarPanel = panel
+            win.addChildWindow(panel, ordered: .below)
         }
-        panel.onAreaChanged = { [weak self, weak panel] area in
-            self?.areaMode = area
-            area.save()
-            self?.updateTitle()
-            self?.regionSelector?.isDimmed = (area == .region)
-            let isFullGif = self?.captureMode == .gif && area == .fullScreen
-            self?.regionSelector?.usesCrosshair = !isFullGif
-            (isFullGif ? NSCursor.arrow : NSCursor.crosshair).set()
-            // Cancel any pending GIF setup when switching area
-            if self?.recordingState == .ready {
-                self?.cancelGifSetup()
-            }
-            DispatchQueue.main.async {
-                panel?.rebuildContent(mode: self?.captureMode ?? .screenshot, area: area, recordingState: self?.recordingState ?? .idle)
-                self?.updateGifFullScreenState()
-            }
-        }
-        panel.onStart = { [weak self] in
-            self?.beginGifRecording()
-        }
-        panel.onStop = { [weak self] in
-            self?.stopGifRecording()
-        }
-        panel.orderFront(nil)
-        self.toolbar = panel
     }
 
     private func updateFrame() {
+        // If not connected, poll for connection
+        if notConnected {
+            let connectedIds = Set(RustBridge.shared.listCompanions().map { $0.device_id })
+            if connectedIds.contains(deviceId) {
+                // Device connected — check for frames
+                notConnected = false
+                if let data = RustBridge.shared.companionLatestFrame(deviceId: deviceId),
+                   let image = NSImage(data: data) {
+                    // Has frames — go straight to live view
+                    currentFrameData = data
+                    imageView?.image = image
+                    waitingOverlay?.removeFromSuperview()
+                    waitingOverlay = nil
+                    regionSelector?.isHidden = false
+                    updateTitle()
+                    updateGifFullScreenState()
+                } else {
+                    // Connected but no frames — switch to waiting for broadcast
+                    waitingForBroadcast = true
+                    let devId = deviceId
+                    let newOverlay = NSHostingView(rootView: WaitingForBroadcastView(onRetry: {
+                        DispatchQueue.global(qos: .utility).async {
+                            let _ = RustBridge.shared.companionScreenshot(deviceId: devId)
+                        }
+                    }))
+                    newOverlay.frame = waitingOverlay?.frame ?? imageView?.bounds ?? .zero
+                    newOverlay.autoresizingMask = [.width, .height]
+                    waitingOverlay?.removeFromSuperview()
+                    window?.contentView?.addSubview(newOverlay)
+                    waitingOverlay = newOverlay
+
+                    // Trigger broadcast request
+                    DispatchQueue.global(qos: .utility).async {
+                        let _ = RustBridge.shared.companionScreenshot(deviceId: devId)
+                    }
+                }
+            }
+            return
+        }
+
         guard let data = RustBridge.shared.companionLatestFrame(deviceId: deviceId),
               let image = NSImage(data: data) else { return }
         currentFrameData = data
@@ -323,7 +403,7 @@ class CompanionPreviewWindow {
         regionSelector?.lockRegion(viewRect)
 
         // Update toolbar to show Start button
-        toolbar?.rebuildContent(mode: captureMode, area: areaMode, recordingState: .ready)
+        rebuildToolbar()
 
         gifEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 {
@@ -342,7 +422,7 @@ class CompanionPreviewWindow {
         isRecordingGif = true
         recordingState = .recording
         regionSelector?.recordingActive = true
-        toolbar?.rebuildContent(mode: captureMode, area: areaMode, recordingState: .recording)
+        rebuildToolbar()
     }
 
     private func cancelGifSetup() {
@@ -356,7 +436,7 @@ class CompanionPreviewWindow {
         regionSelector?.unlockRegion()
         gifFrames = []
         gifRegion = nil
-        toolbar?.rebuildContent(mode: captureMode, area: areaMode, recordingState: .idle)
+        rebuildToolbar()
     }
 
     private func stopGifRecording(cancel: Bool = false) {
@@ -372,7 +452,7 @@ class CompanionPreviewWindow {
         guard !cancel, !gifFrames.isEmpty else {
             gifFrames = []
             gifRegion = nil
-            toolbar?.rebuildContent(mode: captureMode, area: areaMode, recordingState: .idle)
+            rebuildToolbar()
             return
         }
 
@@ -386,7 +466,7 @@ class CompanionPreviewWindow {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let gifData = self?.encodeGif(frames: frames, fps: 10) else {
                 DispatchQueue.main.async {
-                    ToastNotification.show("GIF encoding failed")
+                    ToastNotification.show("GIF encoding failed", icon: "xmark.circle")
                 }
                 return
             }
@@ -517,7 +597,7 @@ struct WaitingForBroadcastView: View {
 
     var body: some View {
         ZStack {
-            Color.black
+            PV.Colors.base
 
             VStack(spacing: 16) {
                 ProgressView()
@@ -526,11 +606,11 @@ struct WaitingForBroadcastView: View {
 
                 Text("Waiting for broadcast...")
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(PV.Colors.textPrimary)
 
                 Text("Accept the broadcast request on your iPhone")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(PV.Colors.textSecondary)
                     .multilineTextAlignment(.center)
 
                 Button(action: onRetry) {
@@ -540,10 +620,14 @@ struct WaitingForBroadcastView: View {
                         Text("Request Again")
                             .font(.system(size: 13, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(PV.Colors.textPrimary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.clear, in: RoundedRectangle(cornerRadius: PV.Radius.small))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: PV.Radius.small)
+                            .strokeBorder(AnyShapeStyle(PV.Gradients.accent), lineWidth: 1)
+                    )
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 8)
@@ -553,23 +637,50 @@ struct WaitingForBroadcastView: View {
     }
 }
 
+struct DeviceNotConnectedView: View {
+    let deviceName: String
+
+    var body: some View {
+        ZStack {
+            PV.Colors.base
+
+            VStack(spacing: 16) {
+                Image(systemName: "iphone.slash")
+                    .font(.system(size: 36))
+                    .foregroundStyle(PV.Gradients.accent.opacity(0.6))
+
+                Text("\(deviceName) is not connected")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(PV.Colors.textPrimary)
+
+                Text("Open the PixyVibe companion app on your iPhone to connect.")
+                    .font(.system(size: 13))
+                    .foregroundColor(PV.Colors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 260)
+            }
+            .padding(40)
+        }
+    }
+}
+
 struct BroadcastFailedView: View {
     var body: some View {
         ZStack {
-            Color.black
+            PV.Colors.base
 
             VStack(spacing: 16) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.system(size: 32))
-                    .foregroundColor(.yellow)
+                    .foregroundColor(Color(hex: 0xF59E0B))
 
                 Text("Broadcast not started")
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(PV.Colors.textPrimary)
 
                 Text("The broadcast request was not accepted.\nTry again or check your iPhone.")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(PV.Colors.textSecondary)
                     .multilineTextAlignment(.center)
             }
             .padding(40)
@@ -637,6 +748,7 @@ struct CompanionToolbarContent: View {
     let onStop: () -> Void
 
     @State private var elapsed: TimeInterval = 0
+    @State private var dotPulse = false
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -644,12 +756,18 @@ struct CompanionToolbarContent: View {
             if recordingState == .recording {
                 // Recording state: show timer + stop
                 Circle()
-                    .fill(Color.red)
+                    .fill(Color(hex: 0xEF4444))
                     .frame(width: 10, height: 10)
+                    .scaleEffect(dotPulse ? 1.4 : 1.0)
+                    .opacity(dotPulse ? 0.6 : 1.0)
                     .padding(.trailing, 6)
+                    .onAppear {
+                        withAnimation(PV.Anim.pulse) { dotPulse = true }
+                    }
 
                 Text("REC \(formatTime(elapsed))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(PV.Colors.textPrimary)
 
                 Spacer().frame(width: 12)
 
@@ -661,20 +779,20 @@ struct CompanionToolbarContent: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.red, in: RoundedRectangle(cornerRadius: 6))
+                    .background(PV.Gradients.recording, in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
             } else {
                 // Normal / ready state
                 toolbarButton("Screenshot", icon: "camera.viewfinder", mode: .screenshot)
-                Divider().frame(height: 20).opacity(0.3)
+                Divider().frame(height: 20).opacity(0.15)
                 toolbarButton("Record GIF", icon: "record.circle", mode: .gif)
                 if showAreaToggle {
-                    Divider().frame(height: 20).opacity(0.3).padding(.horizontal, 4)
+                    Divider().frame(height: 20).opacity(0.15).padding(.horizontal, 4)
                     areaToggle
                 }
                 if recordingState == .ready {
-                    Divider().frame(height: 20).opacity(0.3).padding(.horizontal, 4)
+                    Divider().frame(height: 20).opacity(0.15).padding(.horizontal, 4)
                     Button(action: onStart) {
                         HStack(spacing: 4) {
                             Image(systemName: "record.circle").font(.system(size: 11))
@@ -683,7 +801,7 @@ struct CompanionToolbarContent: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(Color.green, in: RoundedRectangle(cornerRadius: 6))
+                        .background(PV.Gradients.success, in: RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
                 }
@@ -691,7 +809,7 @@ struct CompanionToolbarContent: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .pvGlass(cornerRadius: PV.Radius.medium)
         .fixedSize()
         .onReceive(timer) { _ in
             if recordingState == .recording { elapsed += 1 }
@@ -714,16 +832,18 @@ struct CompanionToolbarContent: View {
                 Image(systemName: icon).font(.system(size: 12))
                 Text(label).font(.system(size: 11, weight: .medium))
             }
+            .foregroundColor(isSelected ? PV.Colors.textPrimary : PV.Colors.textSecondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+                    .fill(PV.Gradients.accentSolid.opacity(isSelected ? 0.15 : 0))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                    .strokeBorder(isSelected ? AnyShapeStyle(PV.Gradients.accent) : AnyShapeStyle(Color.clear), lineWidth: 1.5)
             )
+            .animation(PV.Anim.snappy, value: isSelected)
         }
         .buttonStyle(.plain)
     }

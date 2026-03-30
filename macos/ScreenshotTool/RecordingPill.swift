@@ -46,12 +46,19 @@ class RecordingBorderView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
         let inset = bounds.insetBy(dx: borderWidth / 2, dy: borderWidth / 2)
         let path = NSBezierPath(roundedRect: inset, xRadius: 3, yRadius: 3)
         path.lineWidth = borderWidth
-        path.setLineDash([6, 4], count: 2, phase: 0)
-        NSColor.white.withAlphaComponent(0.8).setStroke()
-        path.stroke()
+
+        // Use gradient stroke instead of plain white dashed
+        if let gradient = PV.Gradients.cgAccent() {
+            path.strokeWithGradient(gradient, lineWidth: borderWidth, in: ctx)
+        } else {
+            NSColor.white.withAlphaComponent(0.8).setStroke()
+            path.stroke()
+        }
     }
 }
 
@@ -158,6 +165,19 @@ class RecordingPill: NSPanel {
         )
         hostingView.rootView = pillView
 
+        // Animate pill frame resize
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.4
+            context.timingFunction = CAMediaTimingFunction(name: .default)
+            let fittingSize = hostingView.fittingSize
+            let newWidth = max(fittingSize.width, 180)
+            let newX = self.frame.midX - newWidth / 2
+            self.animator().setFrame(
+                NSRect(x: newX, y: self.frame.origin.y, width: newWidth, height: self.frame.height),
+                display: true
+            )
+        }
+
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.elapsedSeconds = Int(Date().timeIntervalSince(self.startTime))
@@ -194,6 +214,8 @@ struct RecordingPillView: View {
     let onStart: () -> Void
     let onStop: () -> Void
 
+    @State private var dotPulse = false
+
     var body: some View {
         HStack(spacing: 8) {
             switch phase {
@@ -201,7 +223,7 @@ struct RecordingPillView: View {
                 if let size = regionSize {
                     Text("\(Int(size.width))×\(Int(size.height))")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(PV.Colors.textSecondary)
                 }
                 Button(action: onStart) {
                     HStack(spacing: 4) {
@@ -213,18 +235,25 @@ struct RecordingPillView: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.green, in: RoundedRectangle(cornerRadius: 6))
+                    .background(PV.Gradients.success, in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
 
             case .recording:
                 Circle()
-                    .fill(Color.red)
+                    .fill(Color(hex: 0xEF4444))
                     .frame(width: 10, height: 10)
+                    .scaleEffect(dotPulse ? 1.4 : 1.0)
+                    .opacity(dotPulse ? 0.6 : 1.0)
+                    .onAppear {
+                        withAnimation(PV.Anim.pulse) {
+                            dotPulse = true
+                        }
+                    }
 
                 Text("REC \(formatTime(elapsed))")
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white)
+                    .foregroundColor(PV.Colors.textPrimary)
 
                 Button(action: onStop) {
                     HStack(spacing: 4) {
@@ -236,14 +265,29 @@ struct RecordingPillView: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.red, in: RoundedRectangle(cornerRadius: 6))
+                    .background(PV.Gradients.recording, in: RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.8), in: Capsule())
+        .background {
+            Capsule()
+                .fill(PV.Colors.surface)
+                .overlay(
+                    Capsule()
+                        .strokeBorder(
+                            phase == .recording ? PV.Gradients.recording : PV.Gradients.accent,
+                            lineWidth: PV.Border.thin
+                        )
+                )
+                .shadow(
+                    color: phase == .recording ? Color(hex: 0xEF4444).opacity(0.35) : PV.Shadow.accentColor,
+                    radius: phase == .recording ? 8 : PV.Shadow.accentRadius
+                )
+        }
+        .animation(PV.Anim.smooth, value: phase == .recording)
         .fixedSize()
     }
 

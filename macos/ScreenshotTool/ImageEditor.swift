@@ -143,16 +143,16 @@ struct StaticImageEditorView: View {
                         Button(action: { selectedTool = tool }) {
                             Image(systemName: tool.icon)
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(selectedTool == tool ? .white : .secondary)
+                                .foregroundColor(selectedTool == tool ? .white : PV.Colors.textSecondary)
                                 .frame(width: 30, height: 26)
-                                .background(selectedTool == tool ? Color.accentColor : Color.clear)
+                                .background(selectedTool == tool ? PV.Gradients.accent : LinearGradient(colors: [.clear], startPoint: .leading, endPoint: .trailing))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help(tool.rawValue)
                     }
                 }
-                .background(Color.primary.opacity(0.06))
+                .background(PV.Colors.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 Spacer().frame(width: 8)
@@ -198,7 +198,7 @@ struct StaticImageEditorView: View {
                     .buttonStyle(.plain)
                     .disabled(redoStack.isEmpty)
                 }
-                .background(Color.primary.opacity(0.06))
+                .background(PV.Colors.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
                 Spacer()
@@ -207,7 +207,7 @@ struct StaticImageEditorView: View {
                 Button(action: onRemove) {
                     Image(systemName: "trash")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(PV.Colors.textSecondary)
                         .frame(width: 30, height: 26)
                         .contentShape(Rectangle())
                 }
@@ -220,7 +220,7 @@ struct StaticImageEditorView: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 14)
                         .frame(height: 26)
-                        .background(Color.accentColor)
+                        .background(PV.Gradients.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)

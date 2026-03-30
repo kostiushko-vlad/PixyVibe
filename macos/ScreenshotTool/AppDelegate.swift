@@ -10,11 +10,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var editor = ImageEditorWindow()
     private var companionPreview: CompanionPreviewWindow?
+    private var trayPanel: TrayPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("PixyVibe: applicationDidFinishLaunching called")
         RustBridge.shared.initialize()
         NSLog("PixyVibe: Rust core initialized")
+
+        // Force dark appearance globally
+        NSApp.appearance = NSAppearance(named: .darkAqua)
 
         setupStatusItem()
 
@@ -69,148 +73,166 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "PixyVibe")
             button.image?.size = NSSize(width: 18, height: 18)
+            button.action = #selector(statusItemClicked)
+            button.target = self
         }
-
-        rebuildMenu()
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
-        menu.delegate = self
+    @objc private func statusItemClicked() {
+        if let panel = trayPanel, panel.isVisible {
+            dismissTray()
+            return
+        }
+        showTray()
+    }
 
-        menu.addItem(withTitle: "Capture Region", action: #selector(captureRegion), keyEquivalent: "")
-        menu.items.last?.keyEquivalentModifierMask = [.shift, .command]
-        menu.items.last?.keyEquivalent = "2"
-        menu.items.last?.target = self
+    private func showTray() {
+        dismissTray()
 
-        // Companion devices section — always show paired devices
+        // Refresh companion devices
         let connectedDevices = RustBridge.shared.listCompanions()
-        let connectedIds = Set(connectedDevices.map { $0.device_id })
-
-        // Update paired store — use best name (skip "(Broadcast)" suffix)
         for device in connectedDevices {
             let name = device.device_name.replacingOccurrences(of: " (Broadcast)", with: "")
             PairedDeviceStore.shared.upsert(deviceId: device.device_id, deviceName: name)
         }
-
-        // Deduplicate: group by device_id, show one entry per physical device
+        let connectedIds = Set(connectedDevices.map { $0.device_id })
         var seenIds = Set<String>()
         let pairedDevices = PairedDeviceStore.shared.devices.filter { seenIds.insert($0.deviceId).inserted }
-        if !pairedDevices.isEmpty {
-            menu.addItem(NSMenuItem.separator())
-            for device in pairedDevices {
-                let isConnected = connectedIds.contains(device.deviceId)
-
-                let item = NSMenuItem()
-                item.target = self
-                item.action = #selector(captureCompanion(_:))
-                item.representedObject = device.deviceId
-
-                // Custom view: iPhone icon + name + small status dot on the right
-                let menuWidth = menu.size.width > 0 ? menu.size.width : 320
-                let rowView = CompanionMenuRowView(frame: NSRect(x: 0, y: 0, width: menuWidth, height: 22))
-                rowView.autoresizingMask = [.width]
-                rowView.deviceId = device.deviceId
-                rowView.onTap = { [weak self] id in
-                    self?.statusItem.menu?.cancelTracking()
-                    self?.performCompanionScreenshot(deviceId: id)
-                }
-                rowView.onRemove = { [weak self] id in
-                    self?.statusItem.menu?.cancelTracking()
-                    PairedDeviceStore.shared.remove(deviceId: id)
-                    self?.rebuildMenu()
-                }
-                rowView.setupRemoveButton()
-
-                let iconView = NSImageView(frame: NSRect(x: 14, y: 3, width: 14, height: 14))
-                iconView.image = NSImage(systemSymbolName: "iphone", accessibilityDescription: nil)
-                iconView.contentTintColor = .secondaryLabelColor
-                rowView.addSubview(iconView)
-
-                let label = NSTextField(labelWithString: device.deviceName)
-                label.font = NSFont.menuFont(ofSize: 14)
-                label.textColor = .labelColor
-                label.frame = NSRect(x: 34, y: 1, width: 180, height: 18)
-                rowView.addSubview(label)
-
-                let dot = NSView(frame: NSRect(x: rowView.frame.width - 20, y: 7, width: 8, height: 8))
-                dot.autoresizingMask = [.minXMargin]
-                dot.wantsLayer = true
-                dot.layer?.cornerRadius = 4
-                dot.layer?.backgroundColor = isConnected ? NSColor.systemGreen.cgColor : NSColor.systemGray.withAlphaComponent(0.4).cgColor
-                rowView.addSubview(dot)
-
-                item.view = rowView
-                menu.addItem(item)
-            }
-        }
-
-        // History section
         let history = ScreenshotHistory.shared.entries
-        if !history.isEmpty {
-            menu.addItem(NSMenuItem.separator())
 
-            let gridItem = NSMenuItem()
-            let gridView = HistoryGridView(
-                entries: history,
-                onClickEntry: { [weak self] index in
-                    self?.openHistoryEntry(at: index)
-                },
-                onCopyEntry: { index in
-                    let entry = history[index]
-                    if entry.filePath.hasSuffix(".gif") {
-                        ClipboardManager.copyFileAsFinderFull(entry.filePath)
-                    } else {
-                        ClipboardManager.copyImage(entry.imageData)
-                    }
-                    ToastNotification.show("Copied to clipboard")
-                },
-                onRemoveEntry: { [weak self] index in
-                    let entry = history[index]
-                    ScreenshotHistory.shared.remove(filePath: entry.filePath)
-                    NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
-                    self?.rebuildMenu()
+        let content = TrayContentView(
+            pairedDevices: pairedDevices,
+            connectedDeviceIds: connectedIds,
+            history: history,
+            onCaptureRegion: { [weak self] in
+                self?.dismissTray()
+                self?.captureRegion()
+            },
+            onSelectDevice: { [weak self] deviceId in
+                self?.dismissTray()
+                self?.performCompanionScreenshot(deviceId: deviceId)
+            },
+            onRemoveDevice: { [weak self] deviceId in
+                PairedDeviceStore.shared.remove(deviceId: deviceId)
+                self?.dismissTray()
+                self?.showTray()
+            },
+            onClickHistory: { [weak self] index in
+                self?.dismissTray()
+                self?.openHistoryEntry(at: index)
+            },
+            onCopyHistory: { [weak self] index in
+                let entry = history[index]
+                if entry.filePath.hasSuffix(".gif") {
+                    ClipboardManager.copyFileAsFinderFull(entry.filePath)
+                } else {
+                    ClipboardManager.copyImage(entry.imageData)
                 }
-            )
-            // Show 2 rows visible, scroll for more
-            let maxVisibleHeight: CGFloat = 90 * 2 + 6 + 20  // 2 rows + padding + margins
-            let needsScroll = gridView.frame.height > maxVisibleHeight
-            if needsScroll {
-                let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: gridView.frame.width, height: maxVisibleHeight))
-                scrollView.documentView = gridView
-                scrollView.hasVerticalScroller = true
-                scrollView.hasHorizontalScroller = false
-                scrollView.autohidesScrollers = true
-                scrollView.drawsBackground = false
-                scrollView.scrollerStyle = .overlay
-                gridItem.view = scrollView
-            } else {
-                gridItem.view = gridView
+                self?.dismissTray()
+                ToastNotification.show("Copied to clipboard", icon: "doc.on.doc")
+            },
+            onRemoveHistory: { [weak self] index in
+                let entry = history[index]
+                ScreenshotHistory.shared.remove(filePath: entry.filePath)
+                NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
+                self?.dismissTray()
+                self?.showTray()
+            },
+            onClearHistory: { [weak self] in
+                ScreenshotHistory.shared.clear()
+                self?.dismissTray()
+            },
+            onOpenFolder: { [weak self] in
+                self?.dismissTray()
+                self?.openScreenshotsFolder()
+            },
+            onSettings: { [weak self] in
+                self?.dismissTray()
+                self?.openSettings()
+            },
+            onQuit: { [weak self] in
+                self?.dismissTray()
+                self?.quitApp()
             }
-            menu.addItem(gridItem)
+        )
 
-            menu.addItem(NSMenuItem.separator())
+        let hostingView = FirstClickHostingView(rootView: content)
+        let fittingSize = hostingView.fittingSize
+        let panelWidth = max(fittingSize.width, 320)
+        let panelHeight = min(fittingSize.height, 600)
 
-            let clearItem = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
-            clearItem.target = self
-            menu.addItem(clearItem)
+        // Position below the status item button
+        guard let button = statusItem.button, let buttonWindow = button.window else { return }
+        let buttonFrame = button.convert(button.bounds, to: nil)
+        let screenPoint = buttonWindow.convertToScreen(buttonFrame)
 
-            let openFolderItem = NSMenuItem(title: "Open Captures Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "")
-            openFolderItem.target = self
-            menu.addItem(openFolderItem)
+        let panelFrame = NSRect(
+            x: screenPoint.midX - panelWidth / 2,
+            y: screenPoint.minY - panelHeight - 4,
+            width: panelWidth,
+            height: panelHeight
+        )
+
+        let panel = TrayPanel(
+            contentRect: panelFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .popUpMenu
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.isReleasedWhenClosed = false
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.acceptsMouseMovedEvents = true
+        panel.onDismiss = { [weak self] in self?.dismissTray() }
+
+        hostingView.frame = NSRect(origin: .zero, size: panelFrame.size)
+        panel.contentView = hostingView
+        panel.makeKeyAndOrderFront(nil)
+
+        // Animate in: start slightly above + transparent, slide down + fade in
+        let startFrame = NSRect(
+            x: panelFrame.origin.x,
+            y: panelFrame.origin.y + 6,
+            width: panelFrame.width,
+            height: panelFrame.height
+        )
+        panel.setFrame(startFrame, display: false)
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        trayPanel = panel
+
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(panelFrame, display: true)
+            panel.animator().alphaValue = 1
         }
+    }
 
-        menu.addItem(NSMenuItem.separator())
+    private func dismissTray() {
+        guard let panel = trayPanel else { return }
+        let exitFrame = NSRect(
+            x: panel.frame.origin.x,
+            y: panel.frame.origin.y + 4,
+            width: panel.frame.width,
+            height: panel.frame.height
+        )
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.15
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().setFrame(exitFrame, display: true)
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            panel.orderOut(nil)
+            if self?.trayPanel === panel { self?.trayPanel = nil }
+        })
+    }
 
-        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
-        menu.items.last?.target = self
-
-        menu.addItem(NSMenuItem.separator())
-
-        menu.addItem(withTitle: "Quit PixyVibe", action: #selector(quitApp), keyEquivalent: "q")
-        menu.items.last?.target = self
-
-        statusItem.menu = menu
+    private func rebuildMenu() {
+        // No-op — tray is rebuilt on each open now
     }
 
     // MARK: - Menu Actions
@@ -228,7 +250,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if let first = PairedDeviceStore.shared.devices.first {
             targetId = first.deviceId
         } else {
-            ToastNotification.show("No iPhone connected")
+            ToastNotification.show("No iPhone connected", icon: "iphone.slash")
             return
         }
 
@@ -253,17 +275,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let _ = RustBridge.shared.companionScreenshot(deviceId: targetId)
             }
         } else {
-            // Not connected — device is offline
-            let deviceName = PairedDeviceStore.shared.devices.first(where: { $0.deviceId == targetId })?.deviceName ?? "Device"
-            ToastNotification.show("\(deviceName) is not connected — open companion app on that device")
+            // Not connected — open preview in disconnected state
+            openCompanionPreview(deviceId: targetId, notConnected: true)
         }
     }
 
-    private func openCompanionPreview(deviceId: String, waitingForBroadcast: Bool = false) {
+    private func openCompanionPreview(deviceId: String, waitingForBroadcast: Bool = false, notConnected: Bool = false) {
         companionPreview?.close()
         companionPreview = nil
 
-        let preview = CompanionPreviewWindow(deviceId: deviceId, waitingForBroadcast: waitingForBroadcast)
+        let preview = CompanionPreviewWindow(deviceId: deviceId, waitingForBroadcast: waitingForBroadcast, notConnected: notConnected)
         preview.onCapture = { [weak self] imageData, label in
             self?.companionPreview = nil
             let isGif = label.contains("GIF")
@@ -314,13 +335,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 ClipboardManager.copyImage(newData)
             }
-            ToastNotification.show("Saved and copied to clipboard")
+            ToastNotification.show("Saved and copied to clipboard", icon: "checkmark.circle")
         }, onRemove: { [weak self] in
             try? FileManager.default.removeItem(atPath: entry.filePath)
             ScreenshotHistory.shared.remove(filePath: entry.filePath)
             NotificationCenter.default.post(name: .screenshotHistoryChanged, object: nil)
             self?.rebuildMenu()
-            ToastNotification.show("Deleted")
+            ToastNotification.show("Deleted", icon: "trash")
         })
     }
 
@@ -342,15 +363,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let settingsView = SettingsView()
-        let hostingView = NSHostingView(rootView: settingsView)
+        let hostingView = FirstClickHostingView(rootView: settingsView)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 460),
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.title = "PixyVibe Settings"
+        window.isMovableByWindowBackground = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = PV.Colors.nsBase
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false
@@ -412,7 +438,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("PixyVibe: performScreenshot for region %@", NSStringFromRect(region))
         guard let result = RustBridge.shared.processScreenshot(region: region) else {
             NSLog("PixyVibe: processScreenshot returned nil")
-            ToastNotification.show("Screenshot failed")
+            ToastNotification.show("Screenshot failed", icon: "xmark.circle")
             return
         }
         NSLog("PixyVibe: got result, %d bytes", result.imageData.count)
@@ -427,7 +453,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func performGifRecording(region: CGRect) {
         guard let sessionId = RustBridge.shared.gifStart() else {
-            ToastNotification.show("Failed to start recording")
+            ToastNotification.show("Failed to start recording", icon: "xmark.circle")
             return
         }
 
@@ -458,7 +484,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ClipboardManager.copyFileAsFinderFull(result.filePath)
                 CapturePreview.show(imageData: result.imageData, filePath: result.filePath, label: "GIF Recording")
             } else {
-                ToastNotification.show("GIF encoding failed")
+                ToastNotification.show("GIF encoding failed", icon: "xmark.circle")
             }
         }
 
@@ -472,19 +498,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func performDiffBefore(region: CGRect) {
         guard RustBridge.shared.diffStoreBefore(region: region) else {
-            ToastNotification.show("Failed to capture 'before'")
+            ToastNotification.show("Failed to capture 'before'", icon: "xmark.circle")
             return
         }
         isDiffPending = true
         diffRegion = region
         updateTrayIcon()
         let shortcut = ShortcutStore.shared.diff.displayString
-        ToastNotification.show("Before captured — make changes, then press \(shortcut)")
+        ToastNotification.show("Before captured — make changes, then press \(shortcut)", icon: "checkmark.circle")
     }
 
     private func performDiffAfter(region: CGRect) {
         guard let result = RustBridge.shared.diffCompare(region: region) else {
-            ToastNotification.show("Diff comparison failed")
+            ToastNotification.show("Diff comparison failed", icon: "xmark.circle")
             isDiffPending = false
             diffRegion = nil
             updateTrayIcon()
@@ -511,14 +537,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - NSMenuDelegate
-
-extension AppDelegate: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
-        rebuildMenu()
-    }
-}
-
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow, window === settingsWindow {
@@ -534,248 +552,355 @@ enum OverlayMode {
     case diffAfter
 }
 
-// MARK: - History Grid View (2-column grid of recent captures)
+// MARK: - Custom Tray Panel (replaces NSMenu for full styling control)
 
-class HistoryGridView: NSView {
-    private let entries: [ScreenshotEntry]
-    private var onClickEntry: ((Int) -> Void)?
-    private var onCopyEntry: ((Int) -> Void)?
-    private var onRemoveEntry: ((Int) -> Void)?
+// MARK: - First-click-through hosting view
 
-    private let cols = 2
-    private let cellWidth: CGFloat = 150
-    private let thumbHeight: CGFloat = 90
-    private let cellPadding: CGFloat = 6
-    private let menuPadding: CGFloat = 10
+class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
 
-    private var cellRects: [NSRect] = []  // thumb rects per entry
-    private var hoveredIndex: Int? = nil
+class TrayPanel: NSPanel {
+    var onDismiss: (() -> Void)?
+    private var clickMonitor: Any?
 
-    init(entries: [ScreenshotEntry],
-         onClickEntry: ((Int) -> Void)?,
-         onCopyEntry: ((Int) -> Void)?,
-         onRemoveEntry: ((Int) -> Void)?) {
-        self.entries = entries
-        self.onClickEntry = onClickEntry
-        self.onCopyEntry = onCopyEntry
-        self.onRemoveEntry = onRemoveEntry
+    override var canBecomeKey: Bool { true }
 
-        let rows = Int(ceil(Double(entries.count) / Double(2)))
-        let totalWidth = cellWidth * 2 + cellPadding + menuPadding * 2
-        let totalHeight = CGFloat(rows) * thumbHeight + CGFloat(max(0, rows - 1)) * cellPadding + menuPadding * 2
-
-        super.init(frame: NSRect(x: 0, y: 0, width: totalWidth, height: totalHeight))
-        buildCellRects()
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var isFlipped: Bool { true }
-
-    private func buildCellRects() {
-        cellRects = []
-        for i in 0..<entries.count {
-            let col = i % cols
-            let row = i / cols
-            let x = menuPadding + CGFloat(col) * (cellWidth + cellPadding)
-            let y = menuPadding + CGFloat(row) * (thumbHeight + cellPadding)
-            cellRects.append(NSRect(x: x, y: y, width: cellWidth, height: thumbHeight))
+    override func orderFrontRegardless() {
+        super.orderFrontRegardless()
+        // Dismiss when clicking outside
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.onDismiss?()
         }
     }
 
-    // Overlay rects (inside thumb, at bottom — in flipped coords, bottom = maxY)
-    private func overlayRect(for cellRect: NSRect) -> NSRect {
-        NSRect(x: cellRect.minX, y: cellRect.maxY - 24, width: cellRect.width, height: 24)
+    override func orderOut(_ sender: Any?) {
+        if let monitor = clickMonitor {
+            NSEvent.removeMonitor(monitor)
+            clickMonitor = nil
+        }
+        super.orderOut(sender)
     }
 
-    private func copyIconRect(for cellRect: NSRect) -> NSRect {
-        NSRect(x: cellRect.maxX - 34, y: cellRect.maxY - 19, width: 14, height: 14)
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { onDismiss?(); return }
+        super.keyDown(with: event)
     }
+}
 
-    private func removeIconRect(for cellRect: NSRect) -> NSRect {
-        NSRect(x: cellRect.maxX - 16, y: cellRect.maxY - 19, width: 14, height: 14)
+// MARK: - Tray Content (SwiftUI)
+
+struct TrayContentView: View {
+    let pairedDevices: [PairedDevice]
+    let connectedDeviceIds: Set<String>
+    let history: [ScreenshotEntry]
+    let onCaptureRegion: () -> Void
+    let onSelectDevice: (String) -> Void
+    let onRemoveDevice: (String) -> Void
+    let onClickHistory: (Int) -> Void
+    let onCopyHistory: (Int) -> Void
+    let onRemoveHistory: (Int) -> Void
+    let onClearHistory: () -> Void
+    let onOpenFolder: () -> Void
+    let onSettings: () -> Void
+    let onQuit: () -> Void
+
+    private let gridColumns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Devices
+            if !pairedDevices.isEmpty {
+                HStack {
+                    Text("DEVICES")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(1)
+                        .foregroundColor(PV.Colors.textSecondary.opacity(0.5))
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 2)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(pairedDevices, id: \.deviceId) { device in
+                            let isConnected = connectedDeviceIds.contains(device.deviceId)
+                            TrayDeviceChip(device: device, isConnected: isConnected, onSelect: { onSelectDevice(device.deviceId) }, onRemove: { onRemoveDevice(device.deviceId) })
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+                }
+
+                Rectangle()
+                    .fill(PV.Colors.border.opacity(0.4))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 12)
+            }
+
+            // Recent captures
+            HStack {
+                Text("RECENT")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(1)
+                    .foregroundColor(PV.Colors.textSecondary.opacity(0.5))
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+
+            if !history.isEmpty {
+                ScrollView {
+                    LazyVGrid(columns: gridColumns, spacing: 8) {
+                        ForEach(Array(history.enumerated()), id: \.offset) { index, entry in
+                            TrayGridCell(
+                                entry: entry,
+                                onClick: { onClickHistory(index) },
+                                onCopy: { onCopyHistory(index) },
+                                onRemove: { onRemoveHistory(index) }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 340)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 24))
+                        .foregroundStyle(PV.Gradients.accent.opacity(0.4))
+                    Text("No captures yet")
+                        .font(.system(size: 12))
+                        .foregroundColor(PV.Colors.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            }
+
+            Rectangle()
+                .fill(PV.Colors.border.opacity(0.4))
+                .frame(height: 0.5)
+                .padding(.horizontal, 12)
+
+            // Bottom action bar
+            HStack(spacing: 8) {
+                Button(action: onCaptureRegion) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "viewfinder")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Capture")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(PV.Gradients.accent, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                if !history.isEmpty {
+                    TrayIconBtn(icon: "trash", tip: "Clear History", action: onClearHistory)
+                }
+                TrayIconBtn(icon: "folder", tip: "Open Folder", action: onOpenFolder)
+                TrayIconBtn(icon: "gearshape", tip: "Settings", action: onSettings)
+                TrayIconBtn(icon: "power", tip: "Quit", action: onQuit)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
+        }
+        .frame(width: 340)
+        .padding(.bottom, 4)
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(PV.Colors.base)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(
+                            LinearGradient(
+                                colors: [PV.Gradients.accentSolid.opacity(0.06), Color.clear],
+                                startPoint: .top, endPoint: .center
+                            )
+                        )
+                )
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [PV.Gradients.accentSolid.opacity(0.25), PV.Border.thinColor, PV.Border.thinColor],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 0.5
+                )
+        )
+        .shadow(color: PV.Gradients.accentSolid.opacity(0.08), radius: 30, y: 4)
+        .shadow(color: .black.opacity(0.45), radius: 20, y: 8)
     }
+}
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
+// MARK: - Tray Icon Button
 
-        for (i, cellRect) in cellRects.enumerated() {
-            let entry = entries[i]
+struct TrayIconBtn: View {
+    let icon: String
+    let tip: String
+    let action: () -> Void
+    @State private var hover = false
 
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundColor(hover ? PV.Colors.textPrimary : PV.Colors.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(hover ? PV.Gradients.accentSolid.opacity(0.12) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .help(tip)
+        .onHover { hover = $0 }
+        .animation(PV.Anim.hover, value: hover)
+    }
+}
+
+// MARK: - Grid Cell (thumbnail card)
+
+struct TrayGridCell: View {
+    let entry: ScreenshotEntry
+    let onClick: () -> Void
+    let onCopy: () -> Void
+    let onRemove: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        VStack(spacing: 0) {
             // Thumbnail
-            if let thumb = entry.thumbnail(maxSize: cellWidth) {
-                NSGraphicsContext.saveGraphicsState()
-                let clip = NSBezierPath(roundedRect: cellRect, xRadius: 5, yRadius: 5)
-                clip.addClip()
-                thumb.draw(in: cellRect)
-                NSGraphicsContext.restoreGraphicsState()
-
-                NSColor.separatorColor.setStroke()
-                let border = NSBezierPath(roundedRect: cellRect, xRadius: 5, yRadius: 5)
-                border.lineWidth = 0.5
-                border.stroke()
-            }
-
-            // Hover overlay
-            if hoveredIndex == i {
-                let ovr = overlayRect(for: cellRect)
-                NSGraphicsContext.saveGraphicsState()
-                // Clip to bottom of rounded rect
-                let clip = NSBezierPath(roundedRect: cellRect, xRadius: 5, yRadius: 5)
-                clip.addClip()
-                NSColor.black.withAlphaComponent(0.6).setFill()
-                ovr.fill()
-                NSGraphicsContext.restoreGraphicsState()
-
-                // Time label
-                let timeAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 9),
-                    .foregroundColor: NSColor.white.withAlphaComponent(0.9),
-                ]
-                let timeRect = NSRect(x: cellRect.minX + 6, y: cellRect.maxY - 19, width: cellRect.width - 44, height: 14)
-                (entry.timeAgo as NSString).draw(in: timeRect, withAttributes: timeAttrs)
-
-                // Copy icon
-                if let copyImg = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil) {
-                    let tinted = copyImg.tinted(with: .white)
-                    tinted.draw(in: copyIconRect(for: cellRect))
-                }
-
-                // Remove icon
-                if let trashImg = NSImage(systemSymbolName: "trash", accessibilityDescription: nil) {
-                    let tinted = trashImg.tinted(with: .white)
-                    tinted.draw(in: removeIconRect(for: cellRect))
+            Button(action: onClick) {
+                if let thumb = entry.thumbnail(maxSize: 160) {
+                    Image(nsImage: thumb)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(height: 80)
+                        .frame(maxWidth: .infinity)
+                        .clipped()
+                } else {
+                    PV.Colors.surfaceHigh
+                        .frame(height: 80)
                 }
             }
-        }
-    }
+            .buttonStyle(.plain)
+            .overlay(alignment: .bottomTrailing) {
+                if hover {
+                    HStack(spacing: 4) {
+                        Button(action: onCopy) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.white)
+                                .frame(width: 22, height: 22)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy")
 
-    // MARK: - Mouse tracking
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
-            owner: self
-        ))
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        let pt = convert(event.locationInWindow, from: nil)
-        let newHover = cellRects.firstIndex(where: { $0.contains(pt) })
-        if newHover != hoveredIndex {
-            hoveredIndex = newHover
-            needsDisplay = true
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hoveredIndex = nil
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        let pt = convert(event.locationInWindow, from: nil)
-
-        for (i, cellRect) in cellRects.enumerated() {
-            guard cellRect.contains(pt) else { continue }
-
-            // Copy icon hit
-            if copyIconRect(for: cellRect).insetBy(dx: -6, dy: -6).contains(pt) {
-                enclosingMenuItem?.menu?.cancelTracking()
-                onCopyEntry?(i)
-                return
+                        Button(action: onRemove) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(.white)
+                                .frame(width: 22, height: 22)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Delete")
+                    }
+                    .padding(5)
+                    .transition(.opacity)
+                }
             }
-            // Remove icon hit
-            if removeIconRect(for: cellRect).insetBy(dx: -6, dy: -6).contains(pt) {
-                enclosingMenuItem?.menu?.cancelTracking()
-                onRemoveEntry?(i)
-                return
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 8))
+
+            // Info bar
+            VStack(alignment: .leading, spacing: 1) {
+                Text((entry.filePath as NSString).lastPathComponent)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(PV.Colors.textPrimary)
+                    .lineLimit(1)
+                Text(entry.timeAgo)
+                    .font(.system(size: 8))
+                    .foregroundColor(PV.Colors.textSecondary)
             }
-            // Thumbnail hit — open editor
-            enclosingMenuItem?.menu?.cancelTracking()
-            onClickEntry?(i)
-            return
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
         }
+        .background(PV.Colors.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(
+                    hover ? AnyShapeStyle(PV.Gradients.accent.opacity(0.45)) : AnyShapeStyle(Color.white.opacity(0.06)),
+                    lineWidth: hover ? 1 : 0.5
+                )
+        )
+        .shadow(color: hover ? PV.Gradients.accentSolid.opacity(0.15) : .clear, radius: 8)
+        .contentShape(Rectangle())
+        .onHover { hover = $0 }
+        .animation(PV.Anim.snappy, value: hover)
     }
 }
 
-// Helper to tint SF Symbols for drawing
-private extension NSImage {
-    func tinted(with color: NSColor) -> NSImage {
-        let img = self.copy() as! NSImage
-        img.lockFocus()
-        color.set()
-        NSRect(origin: .zero, size: img.size).fill(using: .sourceAtop)
-        img.unlockFocus()
-        img.isTemplate = false
-        return img
-    }
-}
+// MARK: - Device Chip
 
-// MARK: - Companion menu row with click support + hover highlight
+struct TrayDeviceChip: View {
+    let device: PairedDevice
+    let isConnected: Bool
+    let onSelect: () -> Void
+    let onRemove: () -> Void
+    @State private var hover = false
 
-class CompanionMenuRowView: NSView {
-    var deviceId: String = ""
-    var onTap: ((String) -> Void)?
-    var onRemove: ((String) -> Void)?
-    private var isHighlighted = false
-    private var removeButton: NSButton?
-
-    override func mouseUp(with event: NSEvent) {
-        // Check if click is on the remove button area
-        if let btn = removeButton, btn.isHidden == false {
-            let pt = convert(event.locationInWindow, from: nil)
-            if btn.frame.insetBy(dx: -4, dy: -4).contains(pt) {
-                return // handled by button action
-            }
-        }
-        onTap?(deviceId)
-    }
-
-    func setupRemoveButton() {
-        let btn = NSButton(frame: NSRect(x: frame.width - 38, y: 3, width: 14, height: 14))
-        btn.autoresizingMask = [.minXMargin]
-        btn.bezelStyle = .inline
-        btn.isBordered = false
-        btn.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove")
-        btn.contentTintColor = .secondaryLabelColor
-        btn.target = self
-        btn.action = #selector(removeClicked)
-        btn.isHidden = true
-        addSubview(btn)
-        removeButton = btn
-    }
-
-    @objc private func removeClicked() {
-        onRemove?(deviceId)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let highlighted = enclosingMenuItem?.isHighlighted ?? false
-
-        if highlighted {
-            NSColor.selectedContentBackgroundColor.setFill()
-            NSBezierPath(rect: bounds).fill()
-        }
-
-        // Update subview appearance when highlight state changes
-        if highlighted != isHighlighted {
-            isHighlighted = highlighted
-            removeButton?.isHidden = !highlighted
-            removeButton?.contentTintColor = highlighted ? .white : .secondaryLabelColor
-            for sub in subviews {
-                if let label = sub as? NSTextField {
-                    label.textColor = highlighted ? .white : .labelColor
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(isConnected ? Color(hex: 0x10B981) : PV.Colors.border)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: isConnected ? Color(hex: 0x10B981).opacity(0.5) : .clear, radius: 3)
+                Image(systemName: "iphone")
+                    .font(.system(size: 10))
+                    .foregroundColor(PV.Colors.textSecondary)
+                Text(device.deviceName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(hover ? PV.Colors.textPrimary : PV.Colors.textSecondary)
+                    .lineLimit(1)
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(PV.Colors.textSecondary)
+                        .frame(width: 14, height: 14)
+                        .background(Color.white.opacity(hover ? 0.08 : 0), in: Circle())
                 }
-                if let iv = sub as? NSImageView, iv !== removeButton {
-                    iv.contentTintColor = highlighted ? .white : .secondaryLabelColor
-                }
+                .buttonStyle(.plain)
+                .help("Remove device")
+                .opacity(hover ? 1 : 0)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hover ? PV.Gradients.accentSolid.opacity(0.08) : PV.Colors.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(hover ? PV.Gradients.accentSolid.opacity(0.25) : Color.white.opacity(0.06), lineWidth: 0.5)
+            )
         }
-
-        super.draw(dirtyRect)
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
+        .animation(PV.Anim.hover, value: hover)
     }
 }

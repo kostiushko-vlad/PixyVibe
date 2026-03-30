@@ -58,46 +58,59 @@ struct ActionToolbarView: View {
                     Label("Capture AFTER", systemImage: "arrow.triangle.2.circlepath")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .buttonStyle(ToolbarButtonStyle())
+                .buttonStyle(PVToolbarButtonStyle())
                 .keyboardShortcut(.return, modifiers: [])
             } else {
                 Button(action: onScreenshot) {
                     Label("Screenshot", systemImage: "camera.fill")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .buttonStyle(ToolbarButtonStyle())
+                .buttonStyle(PVToolbarButtonStyle())
                 .keyboardShortcut("s", modifiers: [])
 
                 Button(action: onGif) {
                     Label("Record GIF", systemImage: "record.circle")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .buttonStyle(ToolbarButtonStyle())
+                .buttonStyle(PVToolbarButtonStyle())
                 .keyboardShortcut("g", modifiers: [])
 
                 Button(action: onDiffBefore) {
                     Label("Diff", systemImage: "square.split.2x1")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .buttonStyle(ToolbarButtonStyle())
+                .buttonStyle(PVToolbarButtonStyle())
                 .keyboardShortcut("d", modifiers: [])
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .pvGlass(cornerRadius: PV.Radius.medium)
     }
 }
 
-struct ToolbarButtonStyle: ButtonStyle {
+struct PVToolbarButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(configuration.isPressed ? Color.white.opacity(0.2) : Color.white.opacity(0.1))
+                    .fill(isHovered ? Color.white.opacity(0.15) : Color.white.opacity(0.08))
             )
-            .foregroundColor(.white)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(isHovered ? PV.Border.focusColor : Color.clear, lineWidth: PV.Border.thin)
+            )
+            .foregroundColor(PV.Colors.textPrimary)
+            .scaleEffect(configuration.isPressed ? 0.96 : (isHovered ? 1.02 : 1.0))
+            .animation(PV.Anim.hover, value: isHovered)
+            .animation(PV.Anim.hover, value: configuration.isPressed)
+            .onHover { isHovered = $0 }
     }
 }
+
+// Keep backward compatibility alias
+typealias ToolbarButtonStyle = PVToolbarButtonStyle

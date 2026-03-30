@@ -181,6 +181,8 @@ struct ModePickerContent: View {
     let onSelectDevice: (String) -> Void
     let onCancel: () -> Void
 
+    @Namespace private var modeIndicator
+
     var body: some View {
         HStack(spacing: 0) {
             // Core mode buttons
@@ -188,7 +190,7 @@ struct ModePickerContent: View {
                 modeButton(mode)
                 Divider()
                     .frame(height: 28)
-                    .opacity(0.3)
+                    .opacity(0.15)
             }
 
             // Device buttons
@@ -197,14 +199,14 @@ struct ModePickerContent: View {
                 if device.deviceId != devices.last?.deviceId {
                     Divider()
                         .frame(height: 28)
-                        .opacity(0.3)
+                        .opacity(0.15)
                 }
             }
 
             if !devices.isEmpty {
                 Divider()
                     .frame(height: 28)
-                    .opacity(0.3)
+                    .opacity(0.15)
                     .padding(.horizontal, 4)
             }
 
@@ -212,54 +214,57 @@ struct ModePickerContent: View {
             Button(action: onCancel) {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(PV.Colors.textSecondary)
                     .frame(width: 32, height: 32)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ModePickerCloseButtonStyle())
             .contentShape(Rectangle())
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .pvGlass()
     }
+
+    private let modeButtonSize = CGSize(width: 90, height: 58)
 
     private func modeButton(_ mode: CaptureMode) -> some View {
         let isSelected = mode == selectedMode && selectedDeviceId == nil
         let shortcut = mode.shortcutDisplay
         return Button(action: { onSelectMode(mode) }) {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 Image(systemName: mode.icon)
                     .font(.system(size: 16))
                 Text(mode.label)
                     .font(.system(size: 10, weight: .medium))
                 Text(shortcut)
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(PV.Colors.textSecondary)
             }
-            .frame(width: 84, height: 52)
+            .foregroundColor(isSelected ? PV.Colors.textPrimary : PV.Colors.textSecondary)
+            .frame(width: modeButtonSize.width, height: modeButtonSize.height)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+                RoundedRectangle(cornerRadius: PV.Radius.medium)
+                    .fill(PV.Gradients.accentSolid.opacity(isSelected ? 0.15 : 0))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: PV.Radius.medium)
+                    .strokeBorder(isSelected ? AnyShapeStyle(PV.Gradients.accent) : AnyShapeStyle(Color.clear), lineWidth: 1.5)
             )
+            .animation(PV.Anim.snappy, value: isSelected)
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
     }
 
     private func deviceButton(_ device: PairedDevice, number: Int) -> some View {
         let isSelected = selectedDeviceId == device.deviceId
         let isConnected = connectedDeviceIds.contains(device.deviceId)
         return Button(action: { onSelectDevice(device.deviceId) }) {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: "iphone")
                         .font(.system(size: 16))
                     Circle()
-                        .fill(isConnected ? Color.green : Color.gray.opacity(0.5))
+                        .fill(isConnected ? Color(hex: 0x10B981) : PV.Colors.border)
                         .frame(width: 6, height: 6)
                         .offset(x: 4, y: -2)
                 }
@@ -268,19 +273,33 @@ struct ModePickerContent: View {
                     .lineLimit(1)
                 Text("\(number)")
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(PV.Colors.textSecondary)
             }
-            .frame(width: 84, height: 52)
+            .foregroundColor(isSelected ? PV.Colors.textPrimary : PV.Colors.textSecondary)
+            .frame(width: modeButtonSize.width, height: modeButtonSize.height)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
+                RoundedRectangle(cornerRadius: PV.Radius.medium)
+                    .fill(PV.Gradients.accentSolid.opacity(isSelected ? 0.15 : 0))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: PV.Radius.medium)
+                    .strokeBorder(isSelected ? AnyShapeStyle(PV.Gradients.accent) : AnyShapeStyle(Color.clear), lineWidth: 1.5)
             )
+            .animation(PV.Anim.snappy, value: isSelected)
         }
         .buttonStyle(.plain)
-        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Close button with hover
+
+struct ModePickerCloseButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(isHovered ? 1.1 : 1.0)
+            .animation(PV.Anim.hover, value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }

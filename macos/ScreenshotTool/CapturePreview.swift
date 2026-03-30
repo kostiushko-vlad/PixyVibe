@@ -36,7 +36,7 @@ class CapturePreview {
                         } else {
                             ClipboardManager.copyImage(newData)
                         }
-                        ToastNotification.show("Saved and copied to clipboard")
+                        ToastNotification.show("Saved and copied to clipboard", icon: "checkmark.circle")
                     })
                 },
                 onSaveAs: {
@@ -47,12 +47,12 @@ class CapturePreview {
                 },
                 onCopyPath: {
                     ClipboardManager.copyFilePath(filePath)
-                    ToastNotification.show("Path copied")
+                    ToastNotification.show("Path copied", icon: "doc.on.doc")
                 },
                 onDelete: {
                     deleteCapture(filePath: filePath)
                     dismiss()
-                    ToastNotification.show("Deleted")
+                    ToastNotification.show("Deleted", icon: "trash")
                 },
                 onClose: {
                     dismiss()
@@ -65,15 +65,22 @@ class CapturePreview {
             let width = min(fittingSize.width, maxWidth)
             let height = fittingSize.height
 
-            let windowFrame = NSRect(
+            // Start offscreen to the right for slide-in animation
+            let finalFrame = NSRect(
                 x: screen.frame.maxX - width - 20,
                 y: screen.frame.minY + 10,
                 width: width,
                 height: height
             )
+            let startFrame = NSRect(
+                x: finalFrame.origin.x + 30,
+                y: finalFrame.origin.y,
+                width: width,
+                height: height
+            )
 
             let panel = NSPanel(
-                contentRect: windowFrame,
+                contentRect: startFrame,
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
@@ -98,8 +105,11 @@ class CapturePreview {
             tracker.autoresizingMask = [.width, .height]
             mouseTracker = tracker
 
+            // Slide in from right + fade in
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
+                context.duration = 0.45
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(finalFrame, display: true)
                 panel.animator().alphaValue = 1
             }
 
@@ -126,8 +136,18 @@ class CapturePreview {
         guard let window = currentWindow else { return }
         mouseTracker?.onMouseExited = nil
         mouseTracker = nil
+
+        // Slide out to right + fade out
+        let exitFrame = NSRect(
+            x: window.frame.origin.x + 40,
+            y: window.frame.origin.y,
+            width: window.frame.width,
+            height: window.frame.height
+        )
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
+            context.duration = 0.3
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            window.animator().setFrame(exitFrame, display: true)
             window.animator().alphaValue = 0
         }, completionHandler: {
             window.orderOut(nil)
@@ -217,14 +237,14 @@ struct CapturePreviewView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                    .strokeBorder(PV.Border.thinColor, lineWidth: PV.Border.thin)
             )
             .contentShape(Rectangle())
             .onTapGesture { onEdit() }
             .overlay(alignment: .bottomTrailing) {
                 Image(systemName: "pencil.circle.fill")
                     .font(.system(size: 20))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(PV.Colors.textSecondary)
                     .shadow(radius: 2)
                     .padding(6)
             }
@@ -236,10 +256,10 @@ struct CapturePreviewView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(PV.Colors.textPrimary)
                     Text((filePath as NSString).lastPathComponent)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(PV.Colors.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -249,10 +269,11 @@ struct CapturePreviewView: View {
                     Text("Copied to clipboard")
                         .font(.system(size: 10, weight: .medium))
                 }
-                .foregroundColor(.green)
+                .foregroundStyle(PV.Gradients.success)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.green.opacity(0.15), in: Capsule())
+                .background(Color(hex: 0x10B981).opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color(hex: 0x10B981).opacity(0.2), lineWidth: PV.Border.thin))
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -262,13 +283,13 @@ struct CapturePreviewView: View {
                 HStack(spacing: 6) {
                     Text(filePath)
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(PV.Colors.textSecondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Button(action: onCopyPath) {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(PV.Colors.textSecondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -286,9 +307,9 @@ struct CapturePreviewView: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(PV.Colors.textSecondary)
                         .frame(width: 22, height: 22)
-                        .background(Color.white.opacity(0.1), in: Circle())
+                        .background(Color.white.opacity(0.08), in: Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -297,7 +318,7 @@ struct CapturePreviewView: View {
             .padding(.bottom, 12)
         }
         .frame(width: 400)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .pvGlass()
     }
 
     private func previewButton(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
@@ -308,12 +329,12 @@ struct CapturePreviewView: View {
                 Text(title)
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(.white.opacity(0.8))
+            .foregroundColor(PV.Colors.textPrimary.opacity(0.8))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PreviewButtonStyle())
     }
 
     private func deleteButton() -> some View {
@@ -324,12 +345,27 @@ struct CapturePreviewView: View {
                 Text("Delete")
                     .font(.system(size: 11, weight: .medium))
             }
-            .foregroundColor(.red.opacity(0.8))
+            .foregroundColor(Color(hex: 0xEF4444).opacity(0.8))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            .background(Color(hex: 0xEF4444).opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PreviewButtonStyle())
+    }
+}
+
+// MARK: - Preview Button Style with hover
+
+struct PreviewButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : (isHovered ? 1.02 : 1.0))
+            .brightness(isHovered ? 0.05 : 0)
+            .animation(PV.Anim.hover, value: isHovered)
+            .animation(PV.Anim.hover, value: configuration.isPressed)
+            .onHover { isHovered = $0 }
     }
 }
 
