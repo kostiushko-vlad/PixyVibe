@@ -46,7 +46,7 @@ class ScreenshotHistory {
     private let maxEntries = 10
 
     private var indexFileURL: URL {
-        let dir = NSHomeDirectory() + "/.screenshottool"
+        let dir = NSHomeDirectory() + "/.pixyvibe"
         return URL(fileURLWithPath: dir).appendingPathComponent("history.json")
     }
 

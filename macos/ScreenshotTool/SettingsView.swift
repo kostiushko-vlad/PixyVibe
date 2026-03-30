@@ -2,7 +2,7 @@ import SwiftUI
 import Cocoa
 
 struct SettingsView: View {
-    @AppStorage("saveLocation") private var saveLocation = "~/.screenshottool"
+    @AppStorage("saveLocation") private var saveLocation = "~/.pixyvibe/captures"
     @AppStorage("gifFPS") private var gifFPS = 10
     @AppStorage("gifMaxDuration") private var gifMaxDuration = 30
     @AppStorage("imageMaxWidth") private var imageMaxWidth = 1280

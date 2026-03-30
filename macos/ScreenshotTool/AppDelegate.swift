@@ -195,7 +195,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             clearItem.target = self
             menu.addItem(clearItem)
 
-            let openFolderItem = NSMenuItem(title: "Open Screenshots Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "")
+            let openFolderItem = NSMenuItem(title: "Open Captures Folder", action: #selector(openScreenshotsFolder), keyEquivalent: "")
             openFolderItem.target = self
             menu.addItem(openFolderItem)
         }
@@ -246,14 +246,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if isConnected && hasLiveFrames {
             openCompanionPreview(deviceId: targetId)
         } else if isConnected {
-            // Connected but no frames — trigger broadcast and wait
-            ToastNotification.show("Starting broadcast — confirm on device")
+            // Connected but no frames — open preview in waiting state, trigger broadcast
+            openCompanionPreview(deviceId: targetId, waitingForBroadcast: true)
 
             DispatchQueue.global(qos: .utility).async {
                 let _ = RustBridge.shared.companionScreenshot(deviceId: targetId)
             }
-
-            pollForFrames(deviceId: targetId)
         } else {
             // Not connected — device is offline
             let deviceName = PairedDeviceStore.shared.devices.first(where: { $0.deviceId == targetId })?.deviceName ?? "Device"
@@ -261,30 +259,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func pollForFrames(deviceId: String) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            var attempts = 0
-            while attempts < 60 {
-                Thread.sleep(forTimeInterval: 0.5)
-                if RustBridge.shared.companionLatestFrame(deviceId: deviceId) != nil {
-                    DispatchQueue.main.async {
-                        self.openCompanionPreview(deviceId: deviceId)
-                    }
-                    return
-                }
-                attempts += 1
-            }
-            DispatchQueue.main.async {
-                ToastNotification.show("Broadcast didn't start — please confirm on device")
-            }
-        }
-    }
-
-    private func openCompanionPreview(deviceId: String) {
+    private func openCompanionPreview(deviceId: String, waitingForBroadcast: Bool = false) {
         companionPreview?.close()
         companionPreview = nil
 
-        let preview = CompanionPreviewWindow(deviceId: deviceId)
+        let preview = CompanionPreviewWindow(deviceId: deviceId, waitingForBroadcast: waitingForBroadcast)
         preview.onCapture = { [weak self] imageData, label in
             self?.companionPreview = nil
             let isGif = label.contains("GIF")
@@ -303,7 +282,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func saveCompanionCapture(_ data: Data, isGif: Bool = false) -> String {
-        let dir = NSHomeDirectory() + "/.screenshottool/screenshots"
+        let dir = NSHomeDirectory() + "/.pixyvibe/captures"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
@@ -351,7 +330,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openScreenshotsFolder() {
-        let path = NSHomeDirectory() + "/.screenshottool/screenshots"
+        let path = NSHomeDirectory() + "/.pixyvibe/captures"
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 

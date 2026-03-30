@@ -1,9 +1,18 @@
 import Cocoa
 import SwiftUI
 
-enum CompanionCaptureMode {
-    case screenshot
-    case gif
+enum CompanionCaptureMode: String {
+    case screenshot = "screenshot"
+    case gif = "gif"
+
+    static var saved: CompanionCaptureMode {
+        let raw = UserDefaults.standard.string(forKey: "companion_capture_mode") ?? "screenshot"
+        return CompanionCaptureMode(rawValue: raw) ?? .screenshot
+    }
+
+    func save() {
+        UserDefaults.standard.set(rawValue, forKey: "companion_capture_mode")
+    }
 }
 
 enum CompanionRecordingState {
@@ -38,7 +47,7 @@ class CompanionPreviewWindow {
     private var frameTimer: Timer?
     private let deviceId: String
     private var currentFrameData: Data?
-    private var captureMode: CompanionCaptureMode = .screenshot
+    private var captureMode: CompanionCaptureMode = .saved
     private var areaMode: CompanionAreaMode = .saved
 
     // GIF recording state
@@ -48,8 +57,12 @@ class CompanionPreviewWindow {
     private var recordingState: CompanionRecordingState = .idle
     private var gifEscMonitor: Any?
 
-    init(deviceId: String) {
+    private var waitingForBroadcast: Bool
+    private var waitingOverlay: NSView?
+
+    init(deviceId: String, waitingForBroadcast: Bool = false) {
         self.deviceId = deviceId
+        self.waitingForBroadcast = waitingForBroadcast
     }
 
     func show() {
@@ -91,6 +104,7 @@ class CompanionPreviewWindow {
         let selector = CompanionRegionSelector(frame: NSRect(origin: .zero, size: windowSize))
         selector.autoresizingMask = [.width, .height]
         selector.isDimmed = (captureMode == .gif && areaMode == .region)
+        selector.usesCrosshair = !(captureMode == .gif && areaMode == .fullScreen)
         selector.onRegionSelected = { [weak self] rect in
             self?.handleRegionSelected(rect)
         }
@@ -118,10 +132,32 @@ class CompanionPreviewWindow {
 
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        NSCursor.crosshair.set()
+        if !(captureMode == .gif && areaMode == .fullScreen) {
+            NSCursor.crosshair.set()
+        }
+
+        // Show waiting overlay if broadcast hasn't started yet
+        if waitingForBroadcast {
+            let devId = deviceId
+            let overlay = NSHostingView(rootView: WaitingForBroadcastView(onRetry: {
+                DispatchQueue.global(qos: .utility).async {
+                    let _ = RustBridge.shared.companionScreenshot(deviceId: devId)
+                }
+            }))
+            overlay.frame = NSRect(origin: .zero, size: windowSize)
+            overlay.autoresizingMask = [.width, .height]
+            contentView.addSubview(overlay)
+            waitingOverlay = overlay
+            selector.isHidden = true
+        }
 
         // Toolbar below the window
         showToolbar(below: win)
+
+        // Auto-show Start button if saved mode is GIF + Full
+        if !waitingForBroadcast {
+            updateGifFullScreenState()
+        }
 
         frameTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
             self?.updateFrame()
@@ -153,7 +189,11 @@ class CompanionPreviewWindow {
         let panel = CompanionToolbarPanel(frame: toolbarFrame, mode: captureMode, area: areaMode, recordingState: .idle)
         panel.onModeChanged = { [weak self, weak panel] mode in
             self?.captureMode = mode
+            mode.save()
             self?.updateTitle()
+            let isFullGif = mode == .gif && self?.areaMode == .fullScreen
+            self?.regionSelector?.usesCrosshair = !isFullGif
+            (isFullGif ? NSCursor.arrow : NSCursor.crosshair).set()
             if mode == .screenshot {
                 self?.regionSelector?.isDimmed = false
             } else {
@@ -173,6 +213,9 @@ class CompanionPreviewWindow {
             area.save()
             self?.updateTitle()
             self?.regionSelector?.isDimmed = (area == .region)
+            let isFullGif = self?.captureMode == .gif && area == .fullScreen
+            self?.regionSelector?.usesCrosshair = !isFullGif
+            (isFullGif ? NSCursor.arrow : NSCursor.crosshair).set()
             // Cancel any pending GIF setup when switching area
             if self?.recordingState == .ready {
                 self?.cancelGifSetup()
@@ -197,6 +240,16 @@ class CompanionPreviewWindow {
               let image = NSImage(data: data) else { return }
         currentFrameData = data
         imageView?.image = image
+
+        // Dismiss waiting overlay once frames start arriving
+        if waitingForBroadcast {
+            waitingForBroadcast = false
+            waitingOverlay?.removeFromSuperview()
+            waitingOverlay = nil
+            regionSelector?.isHidden = false
+            updateTitle()
+            updateGifFullScreenState()
+        }
 
         // If recording GIF, capture a cropped frame
         if let region = gifRegion, isRecordingGif {
@@ -457,6 +510,73 @@ class CompanionPreviewWindow {
     }
 }
 
+// MARK: - Waiting for Broadcast View
+
+struct WaitingForBroadcastView: View {
+    let onRetry: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black
+
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .tint(.white)
+
+                Text("Waiting for broadcast...")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white)
+
+                Text("Accept the broadcast request on your iPhone")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+
+                Button(action: onRetry) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12))
+                        Text("Request Again")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 8)
+            }
+            .padding(40)
+        }
+    }
+}
+
+struct BroadcastFailedView: View {
+    var body: some View {
+        ZStack {
+            Color.black
+
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 32))
+                    .foregroundColor(.yellow)
+
+                Text("Broadcast not started")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white)
+
+                Text("The broadcast request was not accepted.\nTry again or check your iPhone.")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(40)
+        }
+    }
+}
+
 // MARK: - Toolbar Panel
 
 class CompanionToolbarPanel: NSPanel {
@@ -641,6 +761,7 @@ class CompanionRegionSelector: NSView {
     var onClicked: (() -> Void)?
     var recordingActive = false { didSet { needsDisplay = true } }
     var isDimmed: Bool = true { didSet { needsDisplay = true } }
+    var usesCrosshair: Bool = true { didSet { resetCursorRects() } }
 
     private var startPoint: NSPoint?
     private var currentRect: NSRect?
@@ -739,7 +860,7 @@ class CompanionRegionSelector: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .crosshair)
+        addCursorRect(bounds, cursor: usesCrosshair ? .crosshair : .arrow)
     }
 
     override var acceptsFirstResponder: Bool { true }

@@ -168,6 +168,8 @@ struct AnimatedGIFView: NSViewRepresentable {
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = 6
         imageView.layer?.masksToBounds = true
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         if let image = NSImage(data: data) {
             imageView.image = image
         }
@@ -196,11 +198,15 @@ struct CapturePreviewView: View {
             // Image preview — click to edit
             Group {
                 if isGif, let img = NSImage(data: imageData) {
-                    let ratio = img.size.width / max(img.size.height, 1)
-                    let maxH: CGFloat = min(ratio < 1 ? 400 : 240, 400)
+                    let isPortrait = img.size.height > img.size.width
+                    let maxW: CGFloat = isPortrait ? 220 : 400
+                    let maxH: CGFloat = isPortrait ? 480 : 240
+                    let scale = min(maxW / img.size.width, maxH / img.size.height, 1.0)
+                    let w = img.size.width * scale
+                    let h = img.size.height * scale
                     AnimatedGIFView(data: imageData)
-                        .aspectRatio(ratio, contentMode: .fit)
-                        .frame(maxWidth: 400, maxHeight: maxH)
+                        .frame(width: w, height: h)
+                        .frame(maxWidth: .infinity)
                 } else if let nsImage = NSImage(data: imageData) {
                     Image(nsImage: nsImage)
                         .resizable()

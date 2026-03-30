@@ -47,7 +47,8 @@ pub struct Config {
 fn default_output_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".screenshottool")
+        .join(".pixyvibe")
+        .join("captures")
 }
 
 fn default_max_width() -> u32 {
@@ -130,7 +131,7 @@ pub fn init(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sy
                 "port": port,
                 "pid": std::process::id(),
             });
-            let api_json_path = api_state.config.output_dir.join("api.json");
+            let api_json_path = api_state.config.output_dir.parent().unwrap_or(&api_state.config.output_dir).join("api.json");
             if let Ok(json_str) = serde_json::to_string_pretty(&api_json) {
                 let _ = std::fs::write(&api_json_path, json_str);
             }
@@ -172,7 +173,7 @@ pub fn shutdown() {
     let mut global = APP_STATE.write();
     if let Some(state) = global.take() {
         // Clean up api.json
-        let api_json_path = state.config.output_dir.join("api.json");
+        let api_json_path = state.config.output_dir.parent().unwrap_or(&state.config.output_dir).join("api.json");
         let _ = std::fs::remove_file(api_json_path);
     }
 }
