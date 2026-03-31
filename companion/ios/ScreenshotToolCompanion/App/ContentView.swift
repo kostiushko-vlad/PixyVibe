@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Design Tokens (matching macOS DesignSystem)
 
-private enum PVi {
+enum PVi {
     // ┌──────────────────────────────────────────┐
     // │  Keep in sync with macos DesignSystem.swift │
     // └──────────────────────────────────────────┘

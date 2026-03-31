@@ -4,12 +4,24 @@ import SwiftUI
 struct CompanionApp: App {
     @StateObject private var discovery = DesktopDiscovery()
     @StateObject private var webSocket = WebSocketClient.shared
+    @AppStorage("companionOnboardingComplete") private var onboardingComplete = false
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(discovery)
-                .environmentObject(webSocket)
+            ZStack {
+                ContentView()
+                    .environmentObject(discovery)
+                    .environmentObject(webSocket)
+
+                if !onboardingComplete {
+                    CompanionOnboardingView {
+                        withAnimation(PVi.snappy) {
+                            onboardingComplete = true
+                        }
+                    }
+                    .transition(.opacity)
+                }
+            }
         }
     }
 }

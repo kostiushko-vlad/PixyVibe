@@ -14,6 +14,7 @@
 		A20000000000000000000005 /* FrameTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* FrameTransport.swift */; };
 		A20000000000000000000006 /* BroadcastSetupUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000006 /* BroadcastSetupUI.swift */; };
 		A20000000000000000000007 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* SampleHandler.swift */; };
+		A20000000000000000000009 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* OnboardingView.swift */; };
 		A20000000000000000000008 /* BroadcastExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* BroadcastExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -55,6 +56,7 @@
 		A1000000000000000000000B /* BroadcastExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BroadcastExtension.entitlements; sourceTree = "<group>"; };
 		A1000000000000000000000C /* PixyVibeCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PixyVibeCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000000000000000000000D /* BroadcastExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BroadcastExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000E /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +103,7 @@
 			children = (
 				A10000000000000000000001 /* CompanionApp.swift */,
 				A10000000000000000000002 /* ContentView.swift */,
+				A1000000000000000000000E /* OnboardingView.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -246,6 +249,7 @@
 				A20000000000000000000004 /* DesktopDiscovery.swift in Sources */,
 				A20000000000000000000005 /* FrameTransport.swift in Sources */,
 				A20000000000000000000006 /* BroadcastSetupUI.swift in Sources */,
+				A20000000000000000000009 /* OnboardingView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -760,14 +760,14 @@ struct CompanionToolbarContent: View {
                     .frame(width: 10, height: 10)
                     .scaleEffect(dotPulse ? 1.4 : 1.0)
                     .opacity(dotPulse ? 0.6 : 1.0)
+                    .animation(PV.Anim.pulse, value: dotPulse)
                     .padding(.trailing, 6)
-                    .onAppear {
-                        withAnimation(PV.Anim.pulse) { dotPulse = true }
-                    }
+                    .onAppear { dotPulse = true }
 
                 Text("REC \(formatTime(elapsed))")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(PV.Colors.textPrimary)
+                    .frame(minWidth: 70, alignment: .leading)
 
                 Spacer().frame(width: 12)
 
@@ -811,6 +811,8 @@ struct CompanionToolbarContent: View {
         .padding(.vertical, 6)
         .pvGlass(cornerRadius: PV.Radius.medium)
         .fixedSize()
+        .animation(nil, value: elapsed)
+        .animation(nil, value: recordingState == .recording)
         .onReceive(timer) { _ in
             if recordingState == .recording { elapsed += 1 }
         }
@@ -843,7 +845,6 @@ struct CompanionToolbarContent: View {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(isSelected ? AnyShapeStyle(PV.Gradients.accent) : AnyShapeStyle(Color.clear), lineWidth: 1.5)
             )
-            .animation(PV.Anim.snappy, value: isSelected)
         }
         .buttonStyle(.plain)
     }

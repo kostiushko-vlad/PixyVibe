@@ -189,6 +189,14 @@ class RecordingPill: NSPanel {
                 onStop: { [weak self] in self?.onStop?() }
             )
             self.hostingView.rootView = pillView
+            // Re-center window to prevent bounce from text width changes
+            let fittingSize = self.hostingView.fittingSize
+            let newWidth = max(fittingSize.width, 180)
+            let newX = self.frame.midX - newWidth / 2
+            self.setFrame(
+                NSRect(x: newX, y: self.frame.origin.y, width: newWidth, height: self.frame.height),
+                display: true
+            )
         }
     }
 
@@ -245,15 +253,13 @@ struct RecordingPillView: View {
                     .frame(width: 10, height: 10)
                     .scaleEffect(dotPulse ? 1.4 : 1.0)
                     .opacity(dotPulse ? 0.6 : 1.0)
-                    .onAppear {
-                        withAnimation(PV.Anim.pulse) {
-                            dotPulse = true
-                        }
-                    }
+                    .animation(PV.Anim.pulse, value: dotPulse)
+                    .onAppear { dotPulse = true }
 
                 Text("REC \(formatTime(elapsed))")
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundColor(PV.Colors.textPrimary)
+                    .frame(minWidth: 75, alignment: .leading)
 
                 Button(action: onStop) {
                     HStack(spacing: 4) {
@@ -287,7 +293,6 @@ struct RecordingPillView: View {
                     radius: phase == .recording ? 8 : PV.Shadow.accentRadius
                 )
         }
-        .animation(PV.Anim.smooth, value: phase == .recording)
         .fixedSize()
     }
 

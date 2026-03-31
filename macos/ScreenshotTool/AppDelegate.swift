@@ -8,6 +8,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var diffRegion: CGRect?
     private var overlayWindow: OverlayWindow?
     private var settingsWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
+    private var permissionAlertWindow: NSWindow?
     private var editor = ImageEditorWindow()
     private var companionPreview: CompanionPreviewWindow?
     private var trayPanel: TrayPanel?
@@ -26,7 +28,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager.onAction = { [weak self] action in
             self?.handleAction(action)
         }
-        hotkeyManager.register()
 
         NSApp.setActivationPolicy(.accessory)
 
@@ -42,6 +43,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(resumeHotkeys),
             name: .shortcutRecordingStopped, object: nil
         )
+
+        if UserDefaults.standard.bool(forKey: "onboardingComplete") {
+            hotkeyManager.register()
+            checkPermissionsPostOnboarding()
+        } else {
+            showOnboarding()
+        }
     }
 
     @objc private func historyChanged() {
@@ -387,6 +395,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    // MARK: - Onboarding
+
+    private func showOnboarding() {
+        if let window = onboardingWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let onboardingView = OnboardingView {
+            UserDefaults.standard.set(true, forKey: "onboardingComplete")
+            self.hotkeyManager.register()
+            self.onboardingWindow?.close()
+            self.onboardingWindow = nil
+        }
+        let hostingView = FirstClickHostingView(rootView: onboardingView)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 460),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.title = "Welcome to PixyVibe"
+        window.isMovableByWindowBackground = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = PV.Colors.nsBase
+        window.contentView = hostingView
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        onboardingWindow = window
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func checkPermissionsPostOnboarding() {
+        let hasScreen = CGPreflightScreenCaptureAccess()
+        let hasAccessibility = AXIsProcessTrusted()
+        guard !hasScreen || !hasAccessibility else { return }
+
+        // Show minimal permission alert
+        if let window = permissionAlertWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let alertView = PermissionAlertView {
+            self.permissionAlertWindow?.close()
+            self.permissionAlertWindow = nil
+        }
+        let hostingView = FirstClickHostingView(rootView: alertView)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 360),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.title = "PixyVibe Permissions"
+        window.isMovableByWindowBackground = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = PV.Colors.nsBase
+        window.contentView = hostingView
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        permissionAlertWindow = window
+
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
     }
@@ -539,8 +626,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow, window === settingsWindow {
+        guard let window = notification.object as? NSWindow else { return }
+        if window === settingsWindow {
             settingsWindow = nil
+        } else if window === onboardingWindow {
+            // User closed via close button — mark complete anyway, don't trap them
+            if !UserDefaults.standard.bool(forKey: "onboardingComplete") {
+                UserDefaults.standard.set(true, forKey: "onboardingComplete")
+                hotkeyManager.register()
+            }
+            onboardingWindow = nil
+        } else if window === permissionAlertWindow {
+            permissionAlertWindow = nil
         }
     }
 }
