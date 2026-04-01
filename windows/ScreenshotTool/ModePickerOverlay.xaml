@@ -1,0 +1,53 @@
+<Window x:Class="ScreenshotTool.ModePickerOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Topmost="True"
+        ShowInTaskbar="False" Background="Transparent"
+        SizeToContent="WidthAndHeight"
+        KeyDown="Window_KeyDown"
+        Deactivated="Window_Deactivated">
+    <Border Background="#E0161B22" BorderBrush="#FF2D3548" BorderThickness="1"
+            CornerRadius="12" Padding="16,12" Margin="8">
+        <Border.Effect>
+            <DropShadowEffect Color="Black" BlurRadius="20" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <StackPanel>
+            <TextBlock Text="Select Mode" FontSize="12" Foreground="#FF8B949E"
+                       HorizontalAlignment="Center" Margin="0,0,0,12"/>
+
+            <!-- Mode buttons -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button x:Name="BtnScreenshot" Click="Screenshot_Click" Margin="0,0,8,0"
+                        Width="100" Height="70" ToolTip="S">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="&#x1F4F7;" FontSize="22" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Screenshot" FontSize="11" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="BtnGif" Click="Gif_Click" Margin="0,0,8,0"
+                        Width="100" Height="70" ToolTip="G">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="&#x1F3AC;" FontSize="22" HorizontalAlignment="Center"/>
+                        <TextBlock Text="GIF" FontSize="11" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="BtnDiff" Click="Diff_Click"
+                        Width="100" Height="70" ToolTip="D">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="&#x1F504;" FontSize="22" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Diff" FontSize="11" Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- Companion devices (dynamic) -->
+            <StackPanel x:Name="DevicesPanel" Orientation="Horizontal"
+                        HorizontalAlignment="Center" Margin="0,12,0,0"
+                        Visibility="Collapsed"/>
+
+            <!-- Hint -->
+            <TextBlock Text="Press S / G / D or Esc to cancel" FontSize="10"
+                       Foreground="#FF8B949E" HorizontalAlignment="Center" Margin="0,12,0,0"/>
+        </StackPanel>
+    </Border>
+</Window>

@@ -1,0 +1,22 @@
+<Window x:Class="ScreenshotTool.RecordingBorder"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Topmost="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        IsHitTestVisible="False">
+    <Border x:Name="GlowBorder" BorderThickness="3" CornerRadius="4">
+        <Border.BorderBrush>
+            <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                <GradientStop Color="#FFEF4444" Offset="0"/>
+                <GradientStop Color="#FFF97316" Offset="1"/>
+            </LinearGradientBrush>
+        </Border.BorderBrush>
+        <Border.Effect>
+            <DropShadowEffect Color="#FFEF4444" BlurRadius="12" ShadowDepth="0" Opacity="0.6"/>
+        </Border.Effect>
+    </Border>
+</Window>

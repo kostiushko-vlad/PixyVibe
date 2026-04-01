@@ -4,10 +4,17 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <UseWPF>true</UseWPF>
-    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <!-- <ApplicationIcon>icon.ico</ApplicationIcon> -->
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="1.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ContentWithTargetPath Include="pixyvibe_core.dll"
+                           Condition="Exists('pixyvibe_core.dll')"
+                           TargetPath="pixyvibe_core.dll"
+                           CopyToOutputDirectory="Always" />
   </ItemGroup>
 </Project>

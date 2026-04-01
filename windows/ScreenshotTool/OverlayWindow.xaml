@@ -11,5 +11,83 @@
         MouseLeftButtonDown="Window_MouseLeftButtonDown"
         MouseMove="Window_MouseMove"
         MouseLeftButtonUp="Window_MouseLeftButtonUp">
-    <Canvas x:Name="SelectionCanvas"/>
+    <Grid>
+        <Canvas x:Name="SelectionCanvas"/>
+
+        <!-- Mode Picker Panel — bottom center, draggable -->
+        <Border x:Name="ModePanel"
+                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                Margin="0,0,0,60" Cursor="Arrow"
+                Background="#E8161B22"
+                BorderBrush="#40FFFFFF"
+                BorderThickness="0.5"
+                CornerRadius="14"
+                Padding="12,10"
+                MouseLeftButtonDown="ModePanel_MouseDown"
+                MouseMove="ModePanel_MouseMove"
+                MouseLeftButtonUp="ModePanel_MouseUp">
+            <Border.Effect>
+                <DropShadowEffect Color="Black" BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal" x:Name="ModePanelContent">
+                <!-- Screenshot -->
+                <Border x:Name="BtnScreenshot" Cursor="Hand" CornerRadius="12"
+                        Width="90" Height="58" Margin="0,0,0,0"
+                        MouseLeftButtonDown="Mode_Screenshot">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE722;" FontFamily="Segoe MDL2 Assets" FontSize="16"
+                                   HorizontalAlignment="Center" Foreground="#FFE6EDF3"/>
+                        <TextBlock Text="Screenshot" FontSize="10" FontWeight="Medium"
+                                   HorizontalAlignment="Center" Margin="0,3,0,0"/>
+                        <TextBlock Text="⇧⌃1" FontSize="9" HorizontalAlignment="Center"
+                                   Foreground="#FF8B949E" Margin="0,1,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Width="1" Background="#15FFFFFF" Margin="4,8"/>
+
+                <!-- Record GIF -->
+                <Border x:Name="BtnGif" Cursor="Hand" CornerRadius="12"
+                        Width="90" Height="58" Margin="0,0,0,0"
+                        MouseLeftButtonDown="Mode_Gif">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="16"
+                                   HorizontalAlignment="Center" Foreground="#FFE6EDF3"/>
+                        <TextBlock Text="Record GIF" FontSize="10" FontWeight="Medium"
+                                   HorizontalAlignment="Center" Margin="0,3,0,0"/>
+                        <TextBlock Text="⇧⌃2" FontSize="9" HorizontalAlignment="Center"
+                                   Foreground="#FF8B949E" Margin="0,1,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Width="1" Background="#15FFFFFF" Margin="4,8"/>
+
+                <!-- Diff -->
+                <Border x:Name="BtnDiff" Cursor="Hand" CornerRadius="12"
+                        Width="90" Height="58" Margin="0,0,0,0"
+                        MouseLeftButtonDown="Mode_Diff">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE8A4;" FontFamily="Segoe MDL2 Assets" FontSize="16"
+                                   HorizontalAlignment="Center" Foreground="#FFE6EDF3"/>
+                        <TextBlock Text="Diff" FontSize="10" FontWeight="Medium"
+                                   HorizontalAlignment="Center" Margin="0,3,0,0"/>
+                        <TextBlock Text="⇧⌃6" FontSize="9" HorizontalAlignment="Center"
+                                   Foreground="#FF8B949E" Margin="0,1,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Companion devices inserted dynamically -->
+                <StackPanel x:Name="DeviceButtonsPanel" Orientation="Horizontal"/>
+
+                <Border Width="1" Background="#15FFFFFF" Margin="4,8"/>
+
+                <!-- Close -->
+                <Border Cursor="Hand" Width="32" Height="32" CornerRadius="6"
+                        Background="Transparent" MouseLeftButtonDown="Close_Click">
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                               Foreground="#FF8B949E" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+            </StackPanel>
+        </Border>
+    </Grid>
 </Window>

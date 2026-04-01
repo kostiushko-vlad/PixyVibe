@@ -25,6 +25,7 @@ mcp-server/dist/
 # Windows / .NET
 windows/ScreenshotTool/bin/
 windows/ScreenshotTool/obj/
+windows/ScreenshotTool/pixyvibe_core.dll
 *.suo
 *.user
 

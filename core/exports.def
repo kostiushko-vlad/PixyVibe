@@ -1,0 +1,17 @@
+EXPORTS
+    sst_init
+    sst_shutdown
+    sst_register_capture_callback
+    sst_process_screenshot
+    sst_gif_start
+    sst_gif_add_frame
+    sst_gif_finish
+    sst_diff_store_before
+    sst_diff_compare
+    sst_get_latest
+    sst_list_companions
+    sst_companion_screenshot
+    sst_companion_latest_frame
+    sst_free_result
+    sst_free_diff_result
+    sst_free_string

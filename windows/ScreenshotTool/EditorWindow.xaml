@@ -1,0 +1,110 @@
+<Window x:Class="ScreenshotTool.EditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ScreenshotTool.Controls"
+        Title="PixyVibe Editor" Width="900" Height="650"
+        WindowStartupLocation="CenterScreen"
+        KeyDown="Window_KeyDown">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Toolbar -->
+        <Border Grid.Row="0" Background="#FF161B22" BorderBrush="#FF2D3548"
+                BorderThickness="0,0,0,1" Padding="12,8">
+            <DockPanel>
+                <!-- Left: Tools -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <RadioButton x:Name="ToolHand" Content="Hand" GroupName="Tools"
+                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Hand"
+                                 Margin="0,0,4,0"/>
+                    <RadioButton x:Name="ToolPen" Content="Pen" GroupName="Tools"
+                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Pen"
+                                 IsChecked="True" Margin="0,0,4,0"/>
+                    <RadioButton x:Name="ToolArrow" Content="Arrow" GroupName="Tools"
+                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Arrow"
+                                 Margin="0,0,4,0"/>
+                    <RadioButton x:Name="ToolRect" Content="Rect" GroupName="Tools"
+                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Rect"
+                                 Margin="0,0,4,0"/>
+                    <RadioButton x:Name="ToolText" Content="Text" GroupName="Tools"
+                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Text"
+                                 Margin="0,0,12,0"/>
+
+                    <Border Width="1" Background="#FF2D3548" Margin="0,2,12,2"/>
+
+                    <controls:InlineColorPicker x:Name="ColorPicker" VerticalAlignment="Center"/>
+
+                    <Border Width="1" Background="#FF2D3548" Margin="12,2,12,2"/>
+
+                    <TextBlock Text="Width:" VerticalAlignment="Center" Foreground="#FF8B949E"
+                               Margin="0,0,8,0" FontSize="12"/>
+                    <Slider x:Name="LineWidthSlider" Minimum="1" Maximum="10" Value="3"
+                            Width="80" VerticalAlignment="Center"
+                            ValueChanged="LineWidth_Changed"/>
+                    <TextBlock x:Name="LineWidthLabel" Text="3px" VerticalAlignment="Center"
+                               Margin="8,0,0,0" FontSize="12" FontFamily="Consolas"/>
+                </StackPanel>
+
+                <!-- Right: Actions -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                    <Button Content="Undo" Click="Undo_Click" Margin="0,0,4,0" FontSize="12"/>
+                    <Button Content="Redo" Click="Redo_Click" Margin="0,0,12,0" FontSize="12"/>
+                    <Border Width="1" Background="#FF2D3548" Margin="0,2,12,2"/>
+                    <Button Content="Delete" Click="Delete_Click" Margin="0,0,8,0" FontSize="12"/>
+                    <Button Content="Save" Style="{StaticResource AccentButton}" Click="Save_Click"
+                            FontSize="12"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Canvas area -->
+        <Border Grid.Row="1" Background="#FF0D0F14" ClipToBounds="True">
+            <Grid x:Name="CanvasContainer">
+                <!-- Background image -->
+                <Image x:Name="BackgroundImage" Stretch="Uniform"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                <!-- InkCanvas for pen drawing -->
+                <InkCanvas x:Name="DrawingCanvas" Background="Transparent"
+                           EditingMode="Ink"
+                           MouseLeftButtonDown="Canvas_MouseDown"
+                           MouseMove="Canvas_MouseMove"
+                           MouseLeftButtonUp="Canvas_MouseUp"/>
+
+                <!-- Shape overlay for arrows/rects -->
+                <Canvas x:Name="ShapeCanvas" Background="Transparent" IsHitTestVisible="False"/>
+            </Grid>
+        </Border>
+    </Grid>
+
+    <Window.Resources>
+        <Style x:Key="ToolbarButton" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#FFE6EDF3"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF2A3040"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF1C2333"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+</Window>

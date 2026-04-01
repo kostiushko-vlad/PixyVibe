@@ -1,0 +1,93 @@
+<Window x:Class="ScreenshotTool.OnboardingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Welcome to PixyVibe" Width="480" Height="400"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent">
+    <Border Background="#FF0D0F14" BorderBrush="#FF2D3548" BorderThickness="1"
+            CornerRadius="16" Padding="32">
+        <Grid>
+            <!-- Page 1: Welcome -->
+            <StackPanel x:Name="Page1" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <TextBlock FontSize="32" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,8">
+                    <TextBlock.Foreground>
+                        <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                            <GradientStop Color="#FF38BDF8" Offset="0"/>
+                            <GradientStop Color="#FF818CF8" Offset="1"/>
+                        </LinearGradientBrush>
+                    </TextBlock.Foreground>
+                    PixyVibe
+                </TextBlock>
+                <TextBlock Text="Screenshot tool for developers" FontSize="14"
+                           Foreground="#FF8B949E" HorizontalAlignment="Center" Margin="0,0,0,32"/>
+                <TextBlock Text="Capture screenshots, record GIFs, compare diffs,"
+                           FontSize="13" HorizontalAlignment="Center" Foreground="#FFE6EDF3"/>
+                <TextBlock Text="and edit images — right from your desktop."
+                           FontSize="13" HorizontalAlignment="Center" Foreground="#FFE6EDF3"
+                           Margin="0,4,0,32"/>
+                <Button Content="Get Started" Style="{StaticResource AccentButton}"
+                        HorizontalAlignment="Center" Click="Next1_Click"
+                        Padding="24,10" FontSize="14"/>
+            </StackPanel>
+
+            <!-- Page 2: Shortcuts -->
+            <StackPanel x:Name="Page2" VerticalAlignment="Center" Visibility="Collapsed">
+                <TextBlock Text="Your Keyboard Shortcuts" FontSize="20" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" Margin="0,0,0,24"/>
+
+                <Border Background="#FF161B22" CornerRadius="12" Padding="20" Margin="0,0,0,24">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Screenshot" FontSize="14"/>
+                            <TextBlock Grid.Column="1" Text="Shift+Ctrl+1" FontFamily="Consolas"
+                                       Foreground="#FF38BDF8" FontSize="13"/>
+                        </Grid>
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="GIF Recording" FontSize="14"/>
+                            <TextBlock Grid.Column="1" Text="Shift+Ctrl+2" FontFamily="Consolas"
+                                       Foreground="#FF38BDF8" FontSize="13"/>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Before/After Diff" FontSize="14"/>
+                            <TextBlock Grid.Column="1" Text="Shift+Ctrl+6" FontFamily="Consolas"
+                                       Foreground="#FF38BDF8" FontSize="13"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="You can customize these in Settings anytime."
+                           FontSize="12" Foreground="#FF8B949E" HorizontalAlignment="Center"
+                           Margin="0,0,0,20"/>
+                <Button Content="Next" Style="{StaticResource AccentButton}"
+                        HorizontalAlignment="Center" Click="Next2_Click"
+                        Padding="24,10" FontSize="14"/>
+            </StackPanel>
+
+            <!-- Page 3: Ready -->
+            <StackPanel x:Name="Page3" VerticalAlignment="Center" HorizontalAlignment="Center"
+                        Visibility="Collapsed">
+                <TextBlock Text="You're All Set!" FontSize="24" FontWeight="Bold"
+                           HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                <TextBlock Text="PixyVibe is running in your system tray." FontSize="14"
+                           Foreground="#FF8B949E" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBlock Text="Press your hotkey anytime to start capturing." FontSize="14"
+                           Foreground="#FF8B949E" HorizontalAlignment="Center" Margin="0,0,0,32"/>
+                <Button Content="Start Using PixyVibe" Style="{StaticResource AccentButton}"
+                        HorizontalAlignment="Center" Click="Finish_Click"
+                        Padding="24,10" FontSize="14"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
