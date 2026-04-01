@@ -226,38 +226,45 @@ fn register_mdns_via_crate(name: &str, port: u16) -> Result<(), Box<dyn std::err
     let mut properties = HashMap::new();
     properties.insert("version".to_string(), "1".to_string());
 
-    // Get the local IPv4 address explicitly since auto-detect may fail on Windows
-    let local_ip = get_local_ipv4().unwrap_or_else(|| "0.0.0.0".to_string());
-    tracing::info!("mDNS: using local IP {} for service registration", local_ip);
+    // Register on all non-loopback IPv4 addresses so the service is discoverable
+    // regardless of which network adapter the companion device is on
+    let local_ips = get_all_local_ipv4();
+    tracing::info!("mDNS: found local IPs: {:?}", local_ips);
+
+    let ip_str = if local_ips.is_empty() {
+        "0.0.0.0".to_string()
+    } else {
+        local_ips.join(",")
+    };
 
     let service_info = mdns_sd::ServiceInfo::new(
         service_type,
         name,
         host_name,
-        local_ip.as_str(),
+        ip_str.as_str(),
         port,
         Some(properties),
     )?;
 
     daemon.register(service_info)?;
 
-    tracing::info!("Registered mDNS service: {} on port {} at {} (via mdns-sd crate)", name, port, local_ip);
+    tracing::info!("Registered mDNS service: {} on port {} at [{}] (via mdns-sd crate)", name, port, ip_str);
 
     // Keep daemon alive for the lifetime of the app
     *MDNS_DAEMON.lock() = Some(daemon);
     Ok(())
 }
 
-fn get_local_ipv4() -> Option<String> {
-    // Find the first non-loopback IPv4 address
+fn get_all_local_ipv4() -> Vec<String> {
     if_addrs::get_if_addrs()
-        .ok()?
+        .unwrap_or_default()
         .into_iter()
         .filter(|iface| !iface.is_loopback())
-        .find_map(|iface| match iface.addr {
+        .filter_map(|iface| match iface.addr {
             if_addrs::IfAddr::V4(v4) => Some(v4.ip.to_string()),
             _ => None,
         })
+        .collect()
 }
 
 async fn handle_companion_connection(stream: tokio::net::TcpStream, _peer_ip: std::net::IpAddr) {
