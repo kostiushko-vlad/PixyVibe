@@ -1767,6 +1767,7 @@ dependencies = [
  "futures-util",
  "gethostname",
  "gif 0.13.3",
+ "if-addrs",
  "image",
  "mdns-sd",
  "parking_lot",

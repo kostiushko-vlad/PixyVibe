@@ -225,6 +225,7 @@ public partial class App : Application
     private void ShowCompanionPreview(string deviceId)
     {
         var window = new CompanionPreviewWindow(deviceId);
+        window.OnCaptured += (imageData, filePath) => ShowCapturePreview(imageData, filePath);
         window.Show();
     }
 

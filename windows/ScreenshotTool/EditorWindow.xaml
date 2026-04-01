@@ -18,19 +18,19 @@
                 <!-- Left: Tools -->
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
                     <RadioButton x:Name="ToolHand" Content="Hand" GroupName="Tools"
-                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Hand"
+                                 Style="{DynamicResource RadioToolbarButton}" Click="Tool_Click" Tag="Hand"
                                  Margin="0,0,4,0"/>
                     <RadioButton x:Name="ToolPen" Content="Pen" GroupName="Tools"
-                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Pen"
+                                 Style="{DynamicResource RadioToolbarButton}" Click="Tool_Click" Tag="Pen"
                                  IsChecked="True" Margin="0,0,4,0"/>
                     <RadioButton x:Name="ToolArrow" Content="Arrow" GroupName="Tools"
-                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Arrow"
+                                 Style="{DynamicResource RadioToolbarButton}" Click="Tool_Click" Tag="Arrow"
                                  Margin="0,0,4,0"/>
                     <RadioButton x:Name="ToolRect" Content="Rect" GroupName="Tools"
-                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Rect"
+                                 Style="{DynamicResource RadioToolbarButton}" Click="Tool_Click" Tag="Rect"
                                  Margin="0,0,4,0"/>
                     <RadioButton x:Name="ToolText" Content="Text" GroupName="Tools"
-                                 Style="{StaticResource ToolbarButton}" Click="Tool_Click" Tag="Text"
+                                 Style="{DynamicResource RadioToolbarButton}" Click="Tool_Click" Tag="Text"
                                  Margin="0,0,12,0"/>
 
                     <Border Width="1" Background="#FF2D3548" Margin="0,2,12,2"/>
@@ -81,7 +81,7 @@
     </Grid>
 
     <Window.Resources>
-        <Style x:Key="ToolbarButton" TargetType="RadioButton">
+        <Style x:Key="RadioToolbarButton" TargetType="RadioButton">
             <Setter Property="Foreground" Value="#FFE6EDF3"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Padding" Value="10,6"/>
