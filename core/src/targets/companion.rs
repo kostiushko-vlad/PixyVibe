@@ -176,15 +176,13 @@ impl CompanionManager {
     }
 }
 
-/// Stored dns-sd child process so it gets killed on drop (app exit)
+/// Stored dns-sd child process so it gets killed on drop (app exit) — macOS only
 static MDNS_CHILD: parking_lot::Mutex<Option<std::process::Child>> = parking_lot::Mutex::new(None);
 
-fn register_mdns_service(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Kill any previous dns-sd registration
-    if let Some(mut prev) = MDNS_CHILD.lock().take() {
-        let _ = prev.kill();
-    }
+/// Stored mdns-sd daemon so it stays alive — Windows/Linux
+static MDNS_DAEMON: parking_lot::Mutex<Option<mdns_sd::ServiceDaemon>> = parking_lot::Mutex::new(None);
 
+fn register_mdns_service(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let full_hostname = gethostname::gethostname()
         .to_string_lossy()
         .into_owned();
@@ -194,29 +192,72 @@ fn register_mdns_service(port: u16) -> Result<(), Box<dyn std::error::Error + Se
         .unwrap_or(&full_hostname)
         .to_string();
 
-    // Use macOS system dns-sd command to register via the native mDNSResponder.
-    // The mdns-sd crate's pure-Rust mDNS conflicts with the system daemon.
+    // On macOS, use the system dns-sd command to avoid conflicts with mDNSResponder.
+    // On Windows/Linux, use the mdns-sd crate directly.
+    if cfg!(target_os = "macos") {
+        register_mdns_via_dnssd(&short_name, port)
+    } else {
+        register_mdns_via_crate(&short_name, port)
+    }
+}
+
+fn register_mdns_via_dnssd(name: &str, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(mut prev) = MDNS_CHILD.lock().take() {
+        let _ = prev.kill();
+    }
+
     let child = std::process::Command::new("dns-sd")
-        .args([
-            "-R",
-            &short_name,
-            "_screenshottool._tcp",
-            "local",
-            &port.to_string(),
-        ])
+        .args(["-R", name, "_screenshottool._tcp", "local", &port.to_string()])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()?;
 
-    // Store the handle so it gets killed when the app exits
     *MDNS_CHILD.lock() = Some(child);
-
-    tracing::info!(
-        "Registered mDNS service: {} on port {} (via system dns-sd)",
-        short_name,
-        port
-    );
+    tracing::info!("Registered mDNS service: {} on port {} (via system dns-sd)", name, port);
     Ok(())
+}
+
+fn register_mdns_via_crate(name: &str, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let daemon = mdns_sd::ServiceDaemon::new()?;
+
+    let service_type = "_screenshottool._tcp.local.";
+    let host_name = &format!("{}.local.", name);
+
+    let mut properties = HashMap::new();
+    properties.insert("version".to_string(), "1".to_string());
+
+    // Get the local IPv4 address explicitly since auto-detect may fail on Windows
+    let local_ip = get_local_ipv4().unwrap_or_else(|| "0.0.0.0".to_string());
+    tracing::info!("mDNS: using local IP {} for service registration", local_ip);
+
+    let service_info = mdns_sd::ServiceInfo::new(
+        service_type,
+        name,
+        host_name,
+        local_ip.as_str(),
+        port,
+        Some(properties),
+    )?;
+
+    daemon.register(service_info)?;
+
+    tracing::info!("Registered mDNS service: {} on port {} at {} (via mdns-sd crate)", name, port, local_ip);
+
+    // Keep daemon alive for the lifetime of the app
+    *MDNS_DAEMON.lock() = Some(daemon);
+    Ok(())
+}
+
+fn get_local_ipv4() -> Option<String> {
+    // Find the first non-loopback IPv4 address
+    if_addrs::get_if_addrs()
+        .ok()?
+        .into_iter()
+        .filter(|iface| !iface.is_loopback())
+        .find_map(|iface| match iface.addr {
+            if_addrs::IfAddr::V4(v4) => Some(v4.ip.to_string()),
+            _ => None,
+        })
 }
 
 async fn handle_companion_connection(stream: tokio::net::TcpStream, _peer_ip: std::net::IpAddr) {
