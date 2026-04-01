@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PixyVibe Companion</string>
+    <string name="capture_notification_channel">Screen Capture</string>
+    <string name="capture_notification_title">PixyVibe is streaming</string>
+    <string name="capture_notification_text">Sending screen to desktop</string>
+</resources>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Circle background -->
+    <path
+        android:fillColor="#38BDF8"
+        android:fillAlpha="0.15"
+        android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0" />
+    <!-- Simple "P" shape for PixyVibe -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M44,38L44,70L48,70L48,56L56,56C61.52,56 66,51.52 66,46C66,40.48 61.52,36 56,36L46,36C44.9,36 44,36.9 44,38ZM48,40L56,40C59.31,40 62,42.69 62,46C62,49.31 59.31,52 56,52L48,52L48,40Z" />
+</vector>
